@@ -1,6 +1,8 @@
+import tkinter.messagebox as messagebox
 import sqlite3
 import os
 
+os.chdir(os.path.dirname(__file__))
 db_path = os.path.join(os.path.dirname(__file__), 'timetable.db')
 conn = sqlite3.connect(db_path, check_same_thread=False)
 conn.execute('PRAGMA foreign_keys = ON')
@@ -47,7 +49,7 @@ def init_timetable_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS rooms (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name INTEGER NOT NULL UNIQUE
+            name INTEGER NOT NULL UNIQUE 
         )
     ''')
     
@@ -73,116 +75,144 @@ def init_timetable_db():
             conn.execute(query)
             conn.execute("DROP TABLE timetable")
             conn.execute("ALTER TABLE temp_table RENAME TO timetable")
+    
+    # Remove duplicate rows in the timetable table
+    c.execute('''
+        DELETE FROM timetable
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM timetable
+            GROUP BY teacher_id, course_id, room_id, class_section_id, semester, shift
+        )
+    ''')
+    
     conn.commit()
     return conn
 
-def get_or_create_id(table, name, **kwargs):
-    """
-    Get the ID of a record in the specified table by name, or create it if it doesn't exist.
-    """
-    c = conn.cursor()
-    c.execute(f"SELECT id FROM {table} WHERE name = ?", (name,))
-    row = c.fetchone()
-    if row:
-        return row[0]
-    columns = ['name'] + list(kwargs.keys())
-    values = [name] + list(kwargs.values())
-    try:
-        c.execute(f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(['?'] * len(values))})", values)
-    except sqlite3.IntegrityError:
-        c.execute(f"SELECT id FROM {table} WHERE name = ?", (name,))
-        row = c.fetchone()
-        return row[0] if row else None
-    conn.commit()
-    return c.lastrowid
 
-def save_timetable(entries):
+def fetch_id_from_name(table, name, **kwargs):
     """
-    Save timetable entries to the database.
+    Fetch the ID of a record from the database by name.
+    If the record does not exist, insert it and return the new ID.
     """
-    if not entries:
-        return
     try:
-        semester = int(entries[0].get('semester', 0))
-    except ValueError:
-        semester = 0
-    shift = entries[0].get('shift', '').strip()
+        # Validate the name for rooms (must be a valid integer)
+        if table == "rooms":
+            try:
+                name = int(name)  # Ensure the room name is an integer
+                if name <= 0:
+                    raise ValueError
+                else:
+                    print(f"Valid room name: {name}.")
+            except ValueError:
+                print(f"Invalid room name: {name}. Room name must be a positive integer.")
+                return None
+
+        # Check if the record exists
+        query = f"SELECT id FROM {table} WHERE name = ?"
+        params = [name]
+
+        # Add additional conditions for specific tables
+        if table == "class_sections" and "semester" in kwargs and "shift" in kwargs:
+            query += " AND semester = ? AND shift = ?"
+            params.extend([kwargs["semester"], kwargs["shift"]])
+
+        cur = conn.cursor()
+        cur.execute(query, tuple(params))
+        result = cur.fetchone()
+        if result:
+            print(f"Fetched ID for {table}: {result[0]}")  # Print fetched ID
+            return result[0]
+
+        # Insert the record if it does not exist
+        if table == "courses" and "teacher_id" in kwargs:
+            cur.execute(f"INSERT INTO {table} (name, teacher_id) VALUES (?, ?)", (name, kwargs["teacher_id"]))
+            print(f"Inserted new course: {name} with teacher ID {kwargs['teacher_id']}")
+        elif table == "class_sections" and "semester" in kwargs and "shift" in kwargs:
+            cur.execute(f"INSERT INTO {table} (name, semester, shift) VALUES (?, ?, ?)", (name, kwargs["semester"], kwargs["shift"]))
+            print(f"Inserted new class_section: {name} with semester {kwargs['semester']} and shift {kwargs['shift']}")
+        elif table == "rooms":
+            cur.execute(f"INSERT INTO {table} (name) VALUES (?)", (name,))
+            print(f"Room name inserted: {name}.")
+        else:
+            cur.execute(f"INSERT INTO {table} (name) VALUES (?)", (name,))
+            print(f"Inserted new {table}: {name}")
+
+        conn.commit()
+        generated_id = cur.lastrowid
+        print(f"Generated ID for {table}: {generated_id}")  # Print generated ID
+        return generated_id
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Failed to fetch or create ID in {table}: {e}")
+        return None
     
-    init_timetable_db()
-    with conn:
-        # Delete existing timetable entries for the same semester and shift
-        conn.execute('DELETE FROM timetable WHERE semester = ? AND shift = ?', (semester, shift))
-        
-        for e in entries:
-            if not e.get('teacher') or not e.get('course') or not e.get('room') or not e.get('class_section'):
-                continue  # Skip invalid entries
-            
-            # Get or insert teacher
-            teacher_id = get_or_create_id('teachers', e.get('teachers', ''))
-            
-            # Get or insert course
-            course_id = get_or_create_id('courses', e.get('course', ''), teacher_id=teacher_id)
-            
-            # Get or insert room
-            room_id = get_or_create_id('rooms', e.get('room', ''))
-            
-            # Get or insert class_section
-            class_section_id = get_or_create_id('class_sections', e.get('class_section', ''), semester=semester, shift=shift)
-            
-            # Insert timetable entry
-            conn.execute('''
-                INSERT INTO timetable (
-                    teacher_id, course_id, room_id, class_section_id, semester, shift
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                teacher_id,
-                course_id,
-                room_id,
-                class_section_id,
-                semester,
-                shift
-            ))
-    conn.commit()
-
-def load_timetable(semester=None, shift=None):
+def load_timetable(semester=None, shift=None, teacher=None, course=None, room=None, class_section=None):
     """
-    Load timetable entries from the database.
+    Load timetable entries from the database, filtered by the provided criteria.
+    Returns a list of dictionaries with IDs and human-readable names for use in the application.
     """
     init_timetable_db()
     cur = conn.cursor()
     
-    # Query to join timetable with related tables and fetch human-readable names
+    # Base query to join timetable with related tables and fetch human-readable names
     query = '''
         SELECT 
-            teachers.name AS teacher, 
-            courses.name AS course, 
-            rooms.name AS room, 
-            class_sections.name AS class_section, 
-            t.semester, t.shift
+            t.id AS entry_id,
+            t.teacher_id,
+            teachers.name AS teacher_name, 
+            t.course_id,
+            courses.name AS course_name, 
+            t.room_id,
+            rooms.name AS room_name, 
+            t.class_section_id,
+            class_sections.name AS class_section_name, 
+            t.semester, 
+            t.shift
         FROM timetable t
         JOIN teachers ON t.teacher_id = teachers.id
         JOIN courses ON t.course_id = courses.id
         JOIN rooms ON t.room_id = rooms.id
         JOIN class_sections ON t.class_section_id = class_sections.id
-        '''
+    '''
     
     # Add filtering conditions dynamically
+    conditions = []
     params = []
-    if semester is not None and shift is not None:
-        query += ' WHERE t.semester = ? AND t.shift = ?'
-        params.extend([semester, shift])
-    elif semester is not None:
-        query += ' WHERE t.semester = ?'
+    
+    if semester is not None:
+        conditions.append('t.semester = ?')
         params.append(semester)
-    elif shift is not None:
-        query += ' WHERE t.shift = ?'
+    if shift is not None:
+        conditions.append('t.shift = ?')
         params.append(shift)
+    if teacher is not None:
+        conditions.append('teachers.name = ?')
+        params.append(teacher)
+    if course is not None:
+        conditions.append('courses.name = ?')
+        params.append(course)
+    if room is not None:
+        conditions.append('rooms.name = ?')
+        params.append(room)
+    if class_section is not None:
+        conditions.append('class_sections.name = ?')
+        params.append(class_section)
+    
+    # Combine conditions into the query
+    if conditions:
+        query += ' WHERE ' + ' AND '.join(conditions)
     
     # Execute the query with the parameters
     cur.execute(query, params)
     
     # Define the columns to map the results
-    columns = ['teacher', 'course', 'room', 'class_section', 'semester', 'shift']
+    columns = [
+        'entry_id', 'teacher_id', 'teacher_name', 
+        'course_id', 'course_name', 
+        'room_id', 'room_name', 
+        'class_section_id', 'class_section_name', 
+        'semester', 'shift'
+    ]
     
     # Return the results as a list of dictionaries
     return [dict(zip(columns, row)) for row in cur.fetchall()]

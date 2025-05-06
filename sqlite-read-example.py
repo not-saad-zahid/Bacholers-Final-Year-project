@@ -124,7 +124,7 @@ def read_all_data_from_database(db_path):
 # Example usage
 if __name__ == "__main__":
     # Replace 'your_database.db' with the path to your actual .db file
-    db_path = 'timetable.db'
+    db_path = 'db/timetable.db'
     
     print("Method 1: Basic SQLite Reading")
     read_database_basic(db_path)

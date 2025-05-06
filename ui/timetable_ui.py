@@ -5,7 +5,7 @@ import random
 import sqlite3
 from datetime import datetime, timedelta
 from algorithms.timetable_ga import TimetableGeneticAlgorithm
-from db.timetable_db import init_timetable_db, save_timetable, load_timetable
+from db.timetable_db import init_timetable_db, fetch_id_from_name, load_timetable
 
 # Global variables
 timetable_entries = []
@@ -60,20 +60,22 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
 
     # Semester
     tk.Label(left, text="Semester (1-8):", bg="white").grid(row=2, column=0, pady=5)
-    semester_cb = ttk.Combobox(left, values=[str(i) for i in range(1,9)])
+    semester_cb = ttk.Combobox(left, values=[str(i) for i in range(1, 9)])
     semester_cb.grid(row=2, column=1, sticky="ew", pady=5)
-    semester_cb.set(1)
+    semester_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)  # Bind event
 
     # Shift
     tk.Label(left, text="Shift:", bg="white").grid(row=2, column=3, pady=5)
-    shift_cb = ttk.Combobox(left, values=["Morning","Evening"])
+    shift_cb = ttk.Combobox(left, values=["Morning", "Evening"])
     shift_cb.grid(row=2, column=4, sticky="ew", pady=5)
-    shift_cb.set("Morning")
+    shift_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)  # Bind event
 
     # Initialize start_time_var
     start_time_var = tk.StringVar(value="8:00 AM")  # Default value
     # Initialize end_time_var
     end_time_var = tk.StringVar(value="1:00 PM")  # Default value
+    
+    # Teacher Name
     tk.Label(left, text="Teacher Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=0, pady=5)
     tt_teacher_entry = ttk.Entry(left, font=normal_font)
     tt_teacher_entry.grid(row=3, column=1, sticky="ew", pady=5)
@@ -147,41 +149,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     update_tt_treeview()
     
     
-def fetch_id_from_name(table, name, **kwargs):
-    """
-    Fetch the ID of a record from the database by name.
-    If the record does not exist, insert it and return the new ID.
-    """
-    try:
-        # Validate the name for class_sections
-        if table == "class_sections" and not name.isalnum():
-            messagebox.showwarning("Invalid Class/Section Name", "Class/Section name must be alphanumeric.")
-            return None
-
-        # Check if the record exists
-        query = f"SELECT id FROM {table} WHERE name = ?"
-        cur = conn.cursor()
-        cur.execute(query, (name,))
-        result = cur.fetchone()
-        if result:
-            return result[0]
-
-        # Insert the record if it does not exist
-        if table == "courses" and "teacher_id" in kwargs:
-            cur.execute(f"INSERT INTO {table} (name, teacher_id) VALUES (?, ?)", (name, kwargs["teacher_id"]))
-        elif table == "class_sections" and "semester" in kwargs and "shift" in kwargs:
-            cur.execute(f"INSERT INTO {table} (name, semester, shift) VALUES (?, ?, ?)", (name, kwargs["semester"], kwargs["shift"]))
-        elif table == "rooms":
-            cur.execute(f"INSERT INTO {table} (name) VALUES (?)", (int(name),))  # Ensure room is an integer
-        else:
-            cur.execute(f"INSERT INTO {table} (name) VALUES (?)", (name,))
-
-        conn.commit()
-        return cur.lastrowid
-    except sqlite3.Error as e:
-        messagebox.showerror("Database Error", f"Failed to fetch or create ID in {table}: {e}")
-        return None
-
+    
 def fetch_name_from_id(table, id):
     """
     Fetch the name of a record from the database by its ID.
@@ -195,7 +163,7 @@ def fetch_name_from_id(table, id):
     except sqlite3.Error as e:
         messagebox.showerror("Database Error", f"Failed to fetch name from {table}: {e}")
         return "Unknown"
-
+    
 def clear_all_tt_entries():
     global timetable_entries
     if not timetable_entries:
@@ -233,8 +201,8 @@ def save_tt_entry():
         return
 
     # Validate Teacher Name
-    if not teacher.isalpha():
-        messagebox.showwarning("Invalid Teacher Name", "Teacher name must contain only letters.")
+    if not teacher or not teacher.isalpha():
+        messagebox.showwarning("Invalid Teacher Name", "Teacher name must contain only letters and cannot be empty.")
         return
 
     # Validate Course Name
@@ -242,7 +210,7 @@ def save_tt_entry():
         messagebox.showwarning("Invalid Course Name", "Course name cannot be empty.")
         return
 
-    # Validate Room (must be an integer)
+    # Validate Room (must be a positive integer)
     try:
         room_val = int(room)
         if room_val <= 0:
@@ -252,44 +220,22 @@ def save_tt_entry():
         return
 
     # Validate Class/Section (must be alphanumeric)
-    if not class_section.isalnum():
-        messagebox.showwarning("Invalid Class/Section", "Class/Section must be alphanumeric.")
-        return
-
-    # Check for existing semester and shift conflicts
-    if timetable_entries:
-        existing_sem = int(timetable_entries[0]['semester'])
-        existing_shift = timetable_entries[0]['shift']
-        if semester_val != existing_sem or shift != existing_shift:
-            if messagebox.askyesno("Change Semester/Shift", "Changing the semester or shift will clear all entries. Do you want to proceed?"):
-                timetable_entries.clear()
-                update_tt_treeview()
-            else:
-                return
-
-    # Ensure Semester and Shift are selected
-    if not semester or not shift:
-        messagebox.showwarning("Missing Data", "Semester and Shift must be selected.")
-        return
-
-    # Fetch or create IDs for teacher, course, room, and class_section
-    teacher_id = fetch_id_from_name("teachers", teacher)
-    course_id = fetch_id_from_name("courses", course, teacher_id=teacher_id)
-    room_id = fetch_id_from_name("rooms", room)
-    class_section_id = fetch_id_from_name("class_sections", class_section, semester=semester_val, shift=shift)
-
-    if not teacher_id or not course_id or not room_id or not class_section_id:
-        messagebox.showwarning("Invalid Data", "Please ensure all fields are valid and exist in the database.")
+    if not class_section or not class_section.isalnum():
+        messagebox.showwarning("Invalid Class/Section", "Class/Section must be alphanumeric and cannot be empty.")
         return
 
     # Create the entry dictionary
     entry = {
-        "teacher_id": teacher_id,
-        "course_id": course_id,
-        "room_id": room_id,
-        "class_section_id": class_section_id,
+        "teacher_id": None,  # Placeholder for teacher_id
+        "course_id": None,   # Placeholder for course_id
+        "room_id": None,     # Placeholder for room_id
+        "class_section_id": None,  # Placeholder for class_section_id
         "semester": semester_val,
         "shift": shift,
+        "teacher_name": teacher,
+        "course_name": course,
+        "room_name": room,
+        "class_section_name": class_section
     }
 
     # Add or update the entry in the timetable
@@ -302,9 +248,86 @@ def save_tt_entry():
     # Update the treeview
     update_tt_treeview()
 
-    # Show success message
-    messagebox.showinfo("Success", "Timetable entry saved successfully!")
 
+    
+            
+def save_timetable_from_treeview():
+    """
+    Save timetable entries currently displayed in the treeview to the database for the current semester and shift.
+    """
+    global conn
+
+    # Get the current semester and shift
+    current_semester = semester_cb.get().strip()
+    current_shift = shift_cb.get().strip()
+
+    if not current_semester or not current_shift:
+        messagebox.showwarning("Missing Data", "Please select Semester and Shift before saving.")
+        return
+
+    try:
+        current_semester_val = int(current_semester)
+    except ValueError:
+        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8).")
+        return
+
+    # Retrieve entries from the treeview
+    treeview_entries = []
+    for item in tt_treeview.get_children():
+        values = tt_treeview.item(item, 'values')
+        treeview_entries.append({
+            "semester": int(values[1]),
+            "shift": values[2],
+            "teacher_name": values[3],
+            "course_name": values[4],
+            "room_name": values[5],
+            "class_section_name": values[6]
+        })
+
+    # Filter entries for the current semester and shift
+    filtered_entries = [
+        entry for entry in treeview_entries
+        if entry["semester"] == current_semester_val and entry["shift"] == current_shift
+    ]
+
+    if not filtered_entries:
+        messagebox.showwarning("Empty", f"No entries found for Semester {current_semester_val} and Shift {current_shift} to save.")
+        return
+
+    # Save the filtered entries to the database
+    init_timetable_db()
+    with conn:
+        for entry in filtered_entries:
+            try:
+                # Fetch IDs for teacher, course, room, and class_section
+                teacher_id = fetch_id_from_name("teachers", entry["teacher_name"])
+                course_id = fetch_id_from_name("courses", entry["course_name"], teacher_id=teacher_id)
+                room_id = fetch_id_from_name("rooms", entry["room_name"])
+                class_section_id = fetch_id_from_name(
+                    "class_sections", entry["class_section_name"],
+                    semester=current_semester_val, shift=current_shift
+                )
+
+                # Insert the entry into the database
+                conn.execute('''
+                    INSERT INTO timetable (
+                        teacher_id, course_id, room_id, class_section_id, semester, shift
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    teacher_id,
+                    course_id,
+                    room_id,
+                    class_section_id,
+                    current_semester_val,
+                    current_shift
+                ))
+                print("Inserted timetable entry:", entry)
+            except sqlite3.Error as e:
+                print("Error inserting timetable entry:", e)
+    conn.commit()
+    print("Timetable saved successfully.")
+    messagebox.showinfo("Success", f"Saved {len(filtered_entries)} entries for Semester {current_semester_val} and Shift {current_shift}.")
+        
 
 def clear_tt_form():
     """
@@ -316,20 +339,43 @@ def clear_tt_form():
     tt_class_entry.delete(0, tk.END)
 
 
-def update_tt_treeview():
+def update_tt_treeview(current_shift=None, current_semester=None, is_loading=False):
     """
     Update the treeview with the current timetable entries.
+    :param current_shift: Filter entries by the current shift.
+    :param current_semester: Filter entries by the current semester.
+    :param is_loading: A flag to indicate if data is being loaded from the database.
     """
     # Clear the existing treeview items
     for item in tt_treeview.get_children():
         tt_treeview.delete(item)
 
+    # Filter entries for the current semester and shift if provided
+    filtered_entries = timetable_entries
+    if current_shift and current_semester:
+        filtered_entries = [
+            e for e in timetable_entries
+            if e.get('shift') == current_shift and e.get('semester') == current_semester
+        ]
+
     # Populate the treeview with updated entries
-    for i, e in enumerate(timetable_entries):
-        teacher_name = fetch_name_from_id("teachers", e['teacher_id'])
-        course_name = fetch_name_from_id("courses", e['course_id'])
-        room_name = fetch_name_from_id("rooms", e['room_id'])
-        class_section_name = fetch_name_from_id("class_sections", e['class_section_id'])
+    for i, e in enumerate(filtered_entries):
+        # Ensure all required keys exist in the entry
+        if not all(key in e for key in ['teacher_id', 'course_id', 'room_id', 'class_section_id', 'semester', 'shift']):
+            messagebox.showwarning("Invalid Entry", f"Entry {i + 1} is missing required fields and will be skipped.")
+            continue
+
+        # Fetch names only when loading data
+        if is_loading:
+            teacher_name = fetch_name_from_id("teachers", e['teacher_id'])
+            course_name = fetch_name_from_id("courses", e['course_id'])
+            room_name = fetch_name_from_id("rooms", e['room_id'])
+            class_section_name = fetch_name_from_id("class_sections", e['class_section_id'])
+        else:
+            teacher_name = e.get('teacher_name', 'Unknown')
+            course_name = e.get('course_name', 'Unknown')
+            room_name = e.get('room_name', 'Unknown')
+            class_section_name = e.get('class_section_name', 'Unknown')
 
         # Insert the entry into the treeview
         tt_treeview.insert('', 'end', values=(
@@ -341,42 +387,117 @@ def update_tt_treeview():
             room_name,  # Room name
             class_section_name  # Class/Section name
         ))
-
-
+        
 def delete_tt_entry():
+    """
+    Delete the selected timetable entry for the current semester and shift.
+    """
+    global timetable_entries
+
+    # Get the current semester and shift
+    current_semester = semester_cb.get().strip()
+    current_shift = shift_cb.get().strip()
+
+    if not current_semester or not current_shift:
+        messagebox.showwarning("Missing Data", "Please select Semester and Shift before deleting an entry.")
+        return
+
+    try:
+        current_semester_val = int(current_semester)
+    except ValueError:
+        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8).")
+        return
+
+    # Get the selected entry in the treeview
     sel = tt_treeview.focus()
     if not sel:
-        messagebox.showwarning("Selection Error", "Please select an entry to delete")
+        messagebox.showwarning("Selection Error", "Please select an entry to delete.")
         return
+
+    # Confirm deletion
     if not messagebox.askyesno("Confirm", "Are you sure you want to delete this entry?"):
         return
-    idx = int(tt_treeview.item(sel)['values'][0]) - 1
-    timetable_entries.pop(idx)
-    update_tt_treeview()
 
+    # Get the index of the selected entry
+    idx = int(tt_treeview.item(sel)['values'][0]) - 1
+
+    # Check if the selected entry matches the current semester and shift
+    entry = timetable_entries[idx]
+    if entry.get('semester') == current_semester_val and entry.get('shift') == current_shift:
+        # Remove the entry from the database
+        try:
+            conn.execute('''
+                DELETE FROM timetable
+                WHERE teacher_id = ? AND course_id = ? AND room_id = ? AND class_section_id = ? AND semester = ? AND shift = ?
+            ''', (
+                entry['teacher_id'],
+                entry['course_id'],
+                entry['room_id'],
+                entry['class_section_id'],
+                current_semester_val,
+                current_shift
+            ))
+            conn.commit()
+        except sqlite3.Error as e:
+            messagebox.showerror("Database Error", f"Failed to delete entry from the database: {e}")
+            return
+
+        # Remove the entry from the timetable_entries list
+        timetable_entries.pop(idx)
+
+        # Update the treeview
+        update_tt_treeview(current_shift=current_shift, current_semester=current_semester_val)
+        messagebox.showinfo("Success", "Entry deleted successfully.")
+    else:
+        messagebox.showwarning("Mismatch", "The selected entry does not match the current semester and shift.")        
+
+        
 def edit_tt_entry(event):
+    """
+    Edit the selected timetable entry for the current semester and shift.
+    """
     global editing_index
     sel = tt_treeview.selection()
-    
+
     # If no selection, clear the form and reset editing_index
     if not sel:
         editing_index = None
         clear_tt_form()
         return
-    
+
     # Get the selected item's values
     vals = tt_treeview.item(sel[0])['values']
-    
+
+    # Get the current semester and shift
+    current_semester = semester_cb.get().strip()
+    current_shift = shift_cb.get().strip()
+
+    if not current_semester or not current_shift:
+        messagebox.showwarning("Missing Data", "Please select Semester and Shift before editing an entry.")
+        return
+
+    try:
+        current_semester_val = int(current_semester)
+    except ValueError:
+        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8).")
+        return
+
+    # Check if the selected entry matches the current semester and shift
+    if int(vals[1]) != current_semester_val or vals[2] != current_shift:
+        messagebox.showwarning("Mismatch", "The selected entry does not match the current semester and shift.")
+        return
+
     # Set the editing index and populate the form with selected values
     editing_index = vals[0] - 1
     clear_tt_form()
-    
+
     semester_cb.set(vals[1])
     shift_cb.set(vals[2])
     tt_teacher_entry.insert(0, vals[3])
     tt_course_entry.insert(0, vals[4])
     tt_room_entry.insert(0, vals[5])
     tt_class_entry.insert(0, vals[6])
+    
 
 def clear_selection(event):
     """
@@ -545,6 +666,19 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
     except Exception as ex:
         messagebox.showerror("Error", f"Failed to generate timetable: {str(ex)}")
         
+def clear_entries_on_change(event):
+    """
+    Clear all saved timetable entries when semester or shift is changed.
+    """
+    global timetable_entries
+    if timetable_entries:
+        if messagebox.askyesno("Confirm", "Changing Semester or Shift will clear all saved entries. Do you want to proceed?"):
+            timetable_entries.clear()
+            update_tt_treeview()
+        else:
+            # Reset the combobox to its previous value
+            event.widget.set(event.widget.get())  # Keep the current value
+
 def generate_time_slots(start_dt, end_dt, lecture_duration, break_duration, selected_days):
     time_slots = []
     
@@ -646,36 +780,71 @@ def display_timetable(optimized, time_slots, selected_days, lecture_duration, se
              bg="#0d6efd", fg="white", padx=20, pady=5).pack(side="right", padx=5)
 
 def save_to_db_ui():
-    if not timetable_entries:
-        messagebox.showwarning("Empty", "No entries to save")
-        return
-    save_timetable(timetable_entries)
-    messagebox.showinfo("Success", f"Saved {len(timetable_entries)} entries")
-
-def load_from_db_ui():
+    """
+    Save only the current shift's timetable entries to the database.
+    """
     global timetable_entries
+
+    # Get the current shift
+    current_shift = shift_cb.get().strip()
+
+    if not current_shift:
+        messagebox.showwarning("Missing Data", "Please select a Shift before saving.")
+        return
+
+    # Filter entries for the current shift
+    shift_entries = [entry for entry in timetable_entries if entry.get('shift') == current_shift]
+
+    if not shift_entries:
+        messagebox.showwarning("Empty", f"No entries found for the {current_shift} shift to save.")
+        return
+
+    # Save the filtered entries to the database
+    save_timetable_from_treeview()
+    
+    
+def load_from_db_ui():
+    """
+    Load timetable entries from the database for the selected semester and shift.
+    """
+    global timetable_entries
+
+    # Confirm with the user before loading
     if not messagebox.askyesno("Confirm", "Load data from database? This will replace current entries."):
         return
     
+    # Get the selected semester and shift
     semester = semester_cb.get().strip()
     shift = shift_cb.get().strip()
     
     if not semester or not shift:
         messagebox.showwarning("Missing Data", "Please select Semester and Shift before loading.")
         return
+
     try:
         semester_val = int(semester)
     except ValueError:
-        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8)")
+        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8).")
         return
+
+    # Debug: Print semester and shift
+    print("Loading data for Semester:", semester_val, "Shift:", shift)
     
+    # Load data from the database
     timetable_entries = load_timetable(semester_val, shift)
+    
+    # Debug: Print loaded entries
+    print("Loaded entries:", timetable_entries)
+    
+    # Update the treeview with the loaded entries
     update_tt_treeview()
     messagebox.showinfo("Success", f"{len(timetable_entries)} entries loaded from database.")
-
+    
+        
 def show():
     TT_header_frame.pack(fill="x")
     TT_frame.pack(fill="both", expand=True)
+
 
 def hide():
     TT_header_frame.pack_forget()
