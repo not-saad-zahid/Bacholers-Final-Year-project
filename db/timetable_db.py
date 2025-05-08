@@ -57,9 +57,10 @@ def init_timetable_db():
     c.execute('''
         CREATE TABLE IF NOT EXISTS class_sections (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE CHECK(name GLOB '[a-zA-Z0-9]*'),
+            name TEXT NOT NULL,
             semester INTEGER NOT NULL,
-            shift TEXT NOT NULL
+            shift TEXT NOT NULL,
+            UNIQUE(name, semester, shift)   
         )
     ''')
     
