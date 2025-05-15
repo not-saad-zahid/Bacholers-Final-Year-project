@@ -56,7 +56,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
 
     # Input heading
     tk.Label(left, text="Enter Timetable Details", bg="white", fg="#212529", font=header_font).grid(row=0, column=0, columnspan=2, pady=10, sticky="w")
-    ttk.Separator(left, orient='horizontal').grid(row=1, column=0, columnspan=2, sticky='ew', pady=5)
+    ttk.Separator(left, orient='horizontal').grid(row=1, column=0, columnspan=3, sticky='ew', pady=5)
 
     # Semester
     tk.Label(left, text="Semester (1-8):", bg="white").grid(row=2, column=0, pady=5)
