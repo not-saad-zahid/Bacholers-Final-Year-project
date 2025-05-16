@@ -5,7 +5,7 @@ import random
 import sqlite3
 from datetime import datetime, timedelta
 from algorithms.timetable_ga import TimetableGeneticAlgorithm
-from db.timetable_db import init_timetable_db, fetch_id_from_name, load_timetable
+from db.timetable_db import init_timetable_db, fetch_id_from_name, load_timetable, load_timetable_for_ga
 
 # Global variables
 timetable_entries = []
@@ -62,12 +62,14 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     tk.Label(left, text="Semester (1-8):", bg="white").grid(row=2, column=0, pady=5)
     semester_cb = ttk.Combobox(left, values=[str(i) for i in range(1, 9)])
     semester_cb.grid(row=2, column=1, sticky="ew", pady=5)
+    semester_cb.set("1")
     semester_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)  # Bind event
 
     # Shift
     tk.Label(left, text="Shift:", bg="white").grid(row=2, column=3, pady=5)
     shift_cb = ttk.Combobox(left, values=["Morning", "Evening"])
     shift_cb.grid(row=2, column=4, sticky="ew", pady=5)
+    shift_cb.set("Morning")
     shift_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)  # Bind event
 
     # Initialize start_time_var
@@ -537,17 +539,19 @@ def generate_timetable():
     form_frame = tk.Frame(main_frame)
     form_frame.pack(fill="x", expand=True)
     
-    current_semester = str(timetable_entries[0]['semester'])
+    # current_semester = str(timetable_entries[0]['semester'])
     current_shift = timetable_entries[0]['shift']
     
-    # tk.Label(form_frame, text="Semester:", anchor="w").grid(row=0, column=0, sticky="w", pady=5)
-    # semester_display = tk.Label(form_frame, text=current_semester, anchor="w", bg="#f0f0f0", width=20, relief="ridge", padx=5)
-    # semester_display.grid(row=0, column=1, sticky="w", pady=5)
+    tk.Label(form_frame, text="Semesters:", anchor="w").grid(row=0, column=0, sticky="w", pady=5)
+    semester_display = ttk.Combobox(form_frame, values=['1-2'], width=18)
+    semester_display.grid(row=0, column=1, sticky="w", pady=5)
+    semester_display.set("1-2")
     
-    # tk.Label(form_frame, text="Shift:", anchor="w").grid(row=1, column=0, sticky="w", pady=5)
-    # shift_display = tk.Label(form_frame, text=current_shift, anchor="w", bg="#f0f0f0", width=20, relief="ridge", padx=5)
-    # shift_display.grid(row=1, column=1, sticky="w", pady=5)
-    
+    tk.Label(form_frame, text="Shift:", anchor="w").grid(row=1, column=0, sticky="w", pady=5)
+    shift_display = ttk.Combobox(form_frame, values=["Morning", "Evening"], width=18)
+    shift_display.grid(row=1, column=1, sticky="w", pady=5)
+    shift_display.set("Morning")
+
     tk.Label(form_frame, text="Lectures per Course:", anchor="w").grid(row=2, column=0, sticky="w", pady=5)
     lectures_var = tk.StringVar(value="1")
     lectures_cb = ttk.Combobox(form_frame, values=["1", "2", "3"], textvariable=lectures_var, width=18)
@@ -574,9 +578,9 @@ def generate_timetable():
     
     tk.Label(form_frame, text="Daily End Time:", anchor="w").grid(row=6, column=0, sticky="w", pady=5)
     if current_shift == "Morning":
-        default_end = "1:00 PM"
+        default_end = "12:00 PM"
     else:
-        default_end = "5:00 PM"
+        default_end = "4:00 PM"
     end_time_var = tk.StringVar(value=default_end)
     end_time_entry = ttk.Entry(form_frame, textvariable=end_time_var, width=20)
     end_time_entry.grid(row=6, column=1, sticky="w", pady=5)
@@ -586,6 +590,14 @@ def generate_timetable():
     
     def validate_and_generate():
         try:
+            semester_display_value = semester_display.get()
+            if semester_display_value not in ["1-2"]:
+                messagebox.showwarning("Invalid Semester", "Please select a valid semester (1-2)")
+                return
+            shift_display_value = shift_display.get()
+            if shift_display_value not in ["Morning", "Evening"]:
+                messagebox.showwarning("Invalid Shift", "Please select a valid shift (Morning or Evening).")
+                return
             lectures_per_course = int(lectures_var.get())
             max_lectures_per_day = int(max_lectures_var.get())
             lecture_duration = int(duration_var.get())
@@ -601,8 +613,8 @@ def generate_timetable():
 
             # Call the timetable generation function
             run_timetable_generation(
-                semester=current_semester,
-                shift=current_shift,
+                semester=semester_display_value,
+                shift=shift_display_value,
                 lectures_per_course=lectures_per_course,
                 max_lectures_per_day=max_lectures_per_day,
                 lecture_duration=lecture_duration,
@@ -620,10 +632,23 @@ def generate_timetable():
 
 def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_per_day, lecture_duration, start_time, end_time):
     try:
-        # Fetch timetable entries from the database
-        timetable_entries = load_timetable(semester, shift)
+        # Determine which semesters to fetch based on the input
+        if semester == "1-2":
+            semesters = [1, 2]
+        elif isinstance(semester, str) and semester.isdigit():
+            semesters = [int(semester)]
+        elif isinstance(semester, int):
+            semesters = [semester]
+        else:
+            semesters = []
+
+        # Fetch timetable entries for the selected semesters and shift
+        timetable_entries = []
+        for sem in semesters:
+            timetable_entries.extend(load_timetable_for_ga(sem, shift))
+
         if not timetable_entries:
-            messagebox.showwarning("No Data", "No timetable entries found in the database for the selected semester and shift.")
+            messagebox.showwarning("No Data", "No timetable entries found in the database for the selected semester(s) and shift.")
             return
 
         # Parse start and end times
@@ -631,8 +656,8 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
         end_dt = datetime.strptime(end_time, "%I:%M %p")
 
         # Generate time slots based on dialog box constraints
-        selected_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-        time_slots = generate_time_slots(start_dt, end_dt, lecture_duration, 10, selected_days)
+        selected_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        time_slots = generate_time_slots(start_dt, end_dt, lecture_duration, selected_days)
 
         if not time_slots:
             messagebox.showwarning("Configuration Error", "Could not generate any valid time slots with the given parameters.")
@@ -643,7 +668,6 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
 
         # Run the genetic algorithm
         ga = TimetableGeneticAlgorithm(
-            semester=semester,
             shift=shift,
             lectures_per_course=lectures_per_course,
             max_lectures_per_day=max_lectures_per_day,
@@ -654,6 +678,7 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
             max_generations=100,
             mutation_rate=0.15
         )
+        
         optimized = ga.generate_optimized_timetable()
 
         if optimized is None:
@@ -666,6 +691,7 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
     except Exception as ex:
         messagebox.showerror("Error", f"Failed to generate timetable: {str(ex)}")
         
+                
 def clear_entries_on_change(event):
     """
     Clear all saved timetable entries when semester or shift is changed.
@@ -679,32 +705,36 @@ def clear_entries_on_change(event):
             # Reset the combobox to its previous value
             event.widget.set(event.widget.get())  # Keep the current value
 
-def generate_time_slots(start_dt, end_dt, lecture_duration, break_duration, selected_days):
+def generate_time_slots(start_dt, end_dt, lecture_duration, selected_days):
+    """
+    Generate time slots for lectures without any break duration between slots.
+    Each slot is exactly 'lecture_duration' minutes.
+    """
     time_slots = []
-    
-    total_minutes = ((end_dt.hour * 60 + end_dt.minute) - 
-                    (start_dt.hour * 60 + start_dt.minute))
-    slot_duration = lecture_duration + break_duration
+
+    total_minutes = ((end_dt.hour * 60 + end_dt.minute) - (start_dt.hour * 60 + start_dt.minute))
+    slot_duration = lecture_duration
     slots_per_day = total_minutes // slot_duration
-    
+
     if slots_per_day <= 0:
         return []
-    
+
     for day in selected_days:
         current_time = start_dt
         for _ in range(slots_per_day):
-            end_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) + 
-                      timedelta(minutes=lecture_duration))
-            
+            end_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) +
+                        timedelta(minutes=slot_duration))
+
             slot_start = current_time.strftime("%I:%M %p")
             slot_end = end_time.strftime("%I:%M %p")
-            
+
             time_slot = f"{day} {slot_start}-{slot_end}"
             time_slots.append(time_slot)
-            
-            current_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) + 
-                          timedelta(minutes=slot_duration))
-    
+
+            # Move to the next slot
+            current_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) +
+                            timedelta(minutes=slot_duration))
+
     return time_slots
 
 def prepare_entries_for_ga(entries, time_slots):

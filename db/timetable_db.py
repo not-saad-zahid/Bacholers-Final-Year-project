@@ -176,6 +176,7 @@ def load_timetable(semester=None, shift=None, teacher=None, course=None, room=No
         JOIN class_sections ON t.class_section_id = class_sections.id
     '''
     
+    
     # Add filtering conditions dynamically
     conditions = []
     params = []
@@ -217,6 +218,23 @@ def load_timetable(semester=None, shift=None, teacher=None, course=None, room=No
     
     # Return the results as a list of dictionaries
     return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+def load_timetable_for_ga(semester, shift):
+    """
+    If semester is '1-2', fetch both 1st and 2nd semester for the shift.
+    If semester is None, fetch all semesters for the shift.
+    """
+    cur = conn.cursor()
+    if semester is None:
+        query = "SELECT * FROM timetable WHERE shift = ?"
+        cur.execute(query, (shift,))
+    elif semester in [1, 2]:
+        query = "SELECT * FROM timetable WHERE semester = ? AND shift = ?"
+        cur.execute(query, (semester, shift))
+    else:
+        query = "SELECT * FROM timetable WHERE semester = ? AND shift = ?"
+        cur.execute(query, (semester, shift))
+    return cur.fetchall()
 
 def close_db():
     conn.close()
