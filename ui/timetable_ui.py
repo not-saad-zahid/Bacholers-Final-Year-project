@@ -553,7 +553,7 @@ def generate_timetable():
     shift_display.set("Morning")
 
     tk.Label(form_frame, text="Lectures per Course:", anchor="w").grid(row=2, column=0, sticky="w", pady=5)
-    lectures_var = tk.StringVar(value="1")
+    lectures_var = tk.StringVar(value="3")
     lectures_cb = ttk.Combobox(form_frame, values=["1", "2", "3"], textvariable=lectures_var, width=18)
     lectures_cb.grid(row=2, column=1, sticky="w", pady=5)
     
@@ -674,7 +674,7 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
             lecture_duration=lecture_duration,
             time_slots=time_slots,
             population_size=100,
-            max_generations=100,
+            max_generations=200,
             mutation_rate=0.15
         )
         
@@ -685,7 +685,7 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
             return
 
         # Display the generated timetable
-        # display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift)
+        display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift)
 
     except Exception as ex:
         messagebox.showerror("Error", f"Failed to generate timetable: {str(ex)}")
@@ -772,7 +772,7 @@ def prepare_entries_for_ga(entries):
     return ga_entries
 
 
-'''
+
 def display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift):
     win = tk.Toplevel(root)
     win.title(f"Optimized Timetable - Semester {semester} ({shift} Shift)")
@@ -851,7 +851,7 @@ def display_timetable(optimized, time_slots, selected_days, lecture_duration, se
     tk.Button(btn_frame, text="Export to PDF", command=lambda: messagebox.showinfo("Export", 
                 "PDF export functionality could be implemented here"),
              bg="#0d6efd", fg="white", padx=20, pady=5).pack(side="right", padx=5)
-'''
+
         
     
 def save_to_db_ui():

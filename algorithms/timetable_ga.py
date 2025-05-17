@@ -241,29 +241,37 @@ class TimetableGeneticAlgorithm:
         
     
     def crossover(self, parent1, parent2):
-        """Combine two parent timetables into one child via uniform crossover."""
+        """
+        Combine two parent timetables into one child via uniform crossover.
+        Each assignment (lecture) is randomly chosen from one of the parents.
+        """
         child = {}
         keys = list(parent1.keys())
 
         for k in keys:
             # 50% chance of inheriting from each parent
             if random.random() < 0.5:
-                child[k] = parent1[k].copy()  # Use .copy() to avoid reference issues
+                # Use .copy() to avoid reference issues
+                child[k] = parent1[k].copy()
             else:
                 child[k] = parent2[k].copy()
 
-        return child
+        # Optionally, you can add a debug print to see the crossover result
+        # print(f"[DEBUG] Crossover produced child with {len(child)} assignments.")
 
+        return child
+        
     def mutate(self, timetable):
-        """Randomly mutate some assignments in the timetable."""
+        """Randomly mutate some assignments in the timetable. Debug version."""
         for key in list(timetable.keys()):
             if random.random() < self.MUTATION_RATE:
-                # Only mutate time slots, keep room and teacher assignments
+                old_slot = timetable[key]['time_slot']
                 timetable[key]['time_slot'] = random.choice(self.unique_time_slots)
+                print(f"[DEBUG] Mutated {key}: {old_slot} -> {timetable[key]['time_slot']}")
         return timetable
 
     def generate_optimized_timetable(self):
-        """Run the genetic algorithm and return the best timetable found."""
+        """Run the genetic algorithm and return the best timetable found. Debug version."""
         if not self.entries:
             return None
 
@@ -273,6 +281,7 @@ class TimetableGeneticAlgorithm:
         no_improvement_count = 0
 
         for generation in range(self.MAX_GENERATIONS):
+            print(f"\n[DEBUG] --- Generation {generation+1} ---")
             # Evaluate all solutions
             scored = [(tt, self.calculate_fitness(tt)) for tt in population]
             # Sort ascending by score (lower is better)
@@ -281,16 +290,20 @@ class TimetableGeneticAlgorithm:
             current_best = scored[0]
             self.best_fitness_history.append(current_best[1])
 
+            print(f"[DEBUG] Best fitness this generation: {current_best[1]}")
+
             # Check if we found a better solution
             if current_best[1] < best_fitness:
                 best_fitness = current_best[1]
                 best_solution = current_best[0]
                 no_improvement_count = 0
+                print(f"[DEBUG] New best solution found with fitness {best_fitness}")
             else:
                 no_improvement_count += 1
 
             # If perfect (0 conflicts) or no improvement for many generations, return early
             if current_best[1] == 0 or no_improvement_count > 20:
+                print("[DEBUG] Early stopping criteria met.")
                 return best_solution
 
             # Select top performers (elitism)
@@ -307,9 +320,9 @@ class TimetableGeneticAlgorithm:
             while len(new_pop) < self.POPULATION_SIZE:
                 # Tournament selection for parents
                 parent1 = min(random.sample(population, tournament_size),
-                            key=self.calculate_fitness)
+                              key=self.calculate_fitness)
                 parent2 = min(random.sample(population, tournament_size),
-                            key=self.calculate_fitness)
+                              key=self.calculate_fitness)
 
                 # Create child via crossover
                 child = self.crossover(parent1, parent2)
@@ -322,5 +335,6 @@ class TimetableGeneticAlgorithm:
 
             population = new_pop
 
+        print("[DEBUG] Finished all generations.")
         # Return best after final generation
         return best_solution
