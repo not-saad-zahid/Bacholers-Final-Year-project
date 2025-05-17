@@ -3,34 +3,33 @@ Genetic algorithm for generating class timetables with improved distribution of 
 """
 import random
 from datetime import datetime, timedelta
+from db.timetable_db import load_timetable
+
+"""
+Genetic algorithm for generating class timetables with improved distribution of lectures.
+"""
+import random
+from datetime import datetime, timedelta
+from db.timetable_db import load_timetable
 
 class TimetableGeneticAlgorithm:
-    def __init__(
-        self,
-        entries,
-        lectures_per_course,
-        max_lectures_per_day,
-        lecture_duration,
-        time_slots,
-        population_size,
-        max_generations,
-        mutation_rate
-    ):
+    def __init__(self, semester, shift, lectures_per_course, max_lectures_per_day, lecture_duration, start_time, end_time, population_size=100, max_generations=100, mutation_rate=0.15):
         """
-        entries: List of timetable entries (dicts) to schedule
+        semester: Semester for which the timetable is being generated
         shift: Shift (e.g., Morning or Evening) for which the timetable is being generated
         lectures_per_course: Number of lectures per course per week
         max_lectures_per_day: Maximum lectures of the same course per day
         lecture_duration: Duration of each lecture in minutes
-        time_slots: List of available time slots (from UI)
+        start_time: Daily start time for lectures
+        end_time: Daily end time for lectures
         population_size: Number of candidate timetables per generation
         max_generations: Number of generations to evolve
         mutation_rate: Probability of mutation per assignment
         """
-        self.entries = entries
+        self.entries = load_timetable(semester, shift)
         if not self.entries:
-            raise ValueError("No timetable entries provided for the specified semester and shift.")
-
+            raise ValueError("No timetable entries found for the specified semester and shift.")
+        
         self.POPULATION_SIZE = population_size
         self.MAX_GENERATIONS = max_generations
         self.MUTATION_RATE = mutation_rate
@@ -64,6 +63,35 @@ class TimetableGeneticAlgorithm:
 
         # Add tracking for best fitness
         self.best_fitness_history = []
+
+    def _generate_time_slots(self):
+        """Generate time slots based on the provided start and end times."""
+        start_dt = datetime.strptime(self.START_TIME, "%I:%M %p")
+        end_dt = datetime.strptime(self.END_TIME, "%I:%M %p")
+        break_duration = 10  # Break duration in minutes
+        
+        time_slots = []
+        total_minutes = ((end_dt.hour * 60 + end_dt.minute) - 
+                         (start_dt.hour * 60 + start_dt.minute))
+        slot_duration = self.LECTURE_DURATION + break_duration
+        slots_per_day = total_minutes // slot_duration
+        
+        if slots_per_day <= 0:
+            return []
+        
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        for day in days:
+            current_time = start_dt
+            for _ in range(slots_per_day):
+                end_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) + 
+                            timedelta(minutes=self.LECTURE_DURATION))
+                slot_start = current_time.strftime("%I:%M %p")
+                slot_end = end_time.strftime("%I:%M %p")
+                time_slot = f"{day} {slot_start}-{slot_end}"
+                time_slots.append(time_slot)
+                current_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) + 
+                                timedelta(minutes=slot_duration))
+        return time_slots
 
     def generate_initial_population(self):
         # Generate initial population of random timetables with debug output.
@@ -168,21 +196,18 @@ class TimetableGeneticAlgorithm:
             # Room conflict - same room, same time
             room_key = f"{ts}_{rm}"
             if room_key in room_usage:
-                print(f"[DEBUG] Room conflict: {rm} at {ts} for {course}-{class_sec}")
                 score += 20  # Major penalty for room double-booking
             room_usage[room_key] = (course, class_sec)
 
             # Teacher conflict - same teacher, same time
             teacher_key = f"{tch}_{ts}"
             if teacher_key in teacher_usage:
-                print(f"[DEBUG] Teacher conflict: {tch} at {ts} for {course}-{class_sec}")
                 score += 15  # Penalty for teacher double-booking
             teacher_usage[teacher_key] = (course, class_sec)
 
             # Class conflict - same class, same time
             class_key = f"{class_sec}_{ts}"
             if class_key in class_usage:
-                print(f"[DEBUG] Class conflict: {class_sec} at {ts} for {course}")
                 score += 25  # Severe penalty for class double-booking
             class_usage[class_key] = (course, class_sec)
 
@@ -208,9 +233,8 @@ class TimetableGeneticAlgorithm:
 
             # Penalize multiple classes for same section on same day
             if day_conflicts[day][class_sec] > 3:
-                print(f"[DEBUG] Too many classes for section {class_sec} on {day}")
                 score += 10  # Penalty for 4+ classes same day for same section
-
+            
             # Track teacher load per day
             if tch not in teacher_day_load:
                 teacher_day_load[tch] = {}
@@ -219,8 +243,7 @@ class TimetableGeneticAlgorithm:
             teacher_day_load[tch][day] += 1
 
             # Penalize teachers with more than 3 classes per day
-            if teacher_day_load[tch][day] > 3:
-                print(f"[DEBUG] Teacher {tch} overloaded on {day}")
+            if day_conflicts[teacher_day_key] > 3:
                 score += 5  # Penalty for excessive teacher workload per day
 
         # Add penalties for courses not spread across enough days
