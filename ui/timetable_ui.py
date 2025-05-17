@@ -664,16 +664,15 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
             return
 
         # Prepare entries for the genetic algorithm
-        ga_entries = prepare_entries_for_ga(timetable_entries, time_slots)
+        ga_entries = prepare_entries_for_ga(timetable_entries)
 
         # Run the genetic algorithm
         ga = TimetableGeneticAlgorithm(
-            shift=shift,
+            ga_entries,
             lectures_per_course=lectures_per_course,
             max_lectures_per_day=max_lectures_per_day,
             lecture_duration=lecture_duration,
-            start_time=start_time,
-            end_time=end_time,
+            time_slots=time_slots,
             population_size=100,
             max_generations=100,
             mutation_rate=0.15
@@ -686,7 +685,7 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
             return
 
         # Display the generated timetable
-        display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift)
+        # display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift)
 
     except Exception as ex:
         messagebox.showerror("Error", f"Failed to generate timetable: {str(ex)}")
@@ -705,10 +704,11 @@ def clear_entries_on_change(event):
             # Reset the combobox to its previous value
             event.widget.set(event.widget.get())  # Keep the current value
 
-def generate_time_slots(start_dt, end_dt, lecture_duration, selected_days):
+def generate_time_slots(start_dt, end_dt, lecture_duration, selected_days, entries=None):
     """
-    Generate time slots for lectures without any break duration between slots.
+    Generate time slots for lectures based on the entries provided.
     Each slot is exactly 'lecture_duration' minutes.
+    If entries are provided, only generate slots for the days/classes present in entries.
     """
     time_slots = []
 
@@ -719,7 +719,23 @@ def generate_time_slots(start_dt, end_dt, lecture_duration, selected_days):
     if slots_per_day <= 0:
         return []
 
-    for day in selected_days:
+    # If entries are provided, determine which days/classes are needed
+    if entries:
+        # Collect unique days/classes from entries if available
+        # (Assuming entries may have a 'day' or 'class_section_name' field)
+        entry_days = set()
+        for entry in entries:
+            # If your entries have a 'day' field, use it; otherwise, use all selected_days
+            if 'day' in entry:
+                entry_days.add(entry['day'])
+        if entry_days:
+            days_to_use = [day for day in selected_days if day in entry_days]
+        else:
+            days_to_use = selected_days
+    else:
+        days_to_use = selected_days
+
+    for day in days_to_use:
         current_time = start_dt
         for _ in range(slots_per_day):
             end_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) +
@@ -737,16 +753,26 @@ def generate_time_slots(start_dt, end_dt, lecture_duration, selected_days):
 
     return time_slots
 
-def prepare_entries_for_ga(entries, time_slots):
+def prepare_entries_for_ga(entries):
+    """
+    Prepare entries for the genetic algorithm.
+    Converts tuples to dicts if necessary.
+    """
     ga_entries = []
-    
     for entry in entries:
-        ga_entry = entry.copy()
-        ga_entry['time_slot'] = random.choice(time_slots)
+        # If entry is a tuple, convert to dict (adjust keys as per your schema)
+        if isinstance(entry, tuple):
+            # Example: adjust these keys to match your tuple structure
+            keys = ['semester', 'shift', 'teacher', 'course', 'room', 'class', 'other_fields']
+            ga_entry = dict(zip(keys, entry))
+        else:
+            ga_entry = entry.copy()
+        ga_entry['time_slot'] = None  # Let the GA assign this
         ga_entries.append(ga_entry)
-    
     return ga_entries
 
+
+'''
 def display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift):
     win = tk.Toplevel(root)
     win.title(f"Optimized Timetable - Semester {semester} ({shift} Shift)")
@@ -761,10 +787,11 @@ def display_timetable(optimized, time_slots, selected_days, lecture_duration, se
     tk.Label(header_frame, text=f"Semester {semester} - {shift} Shift", 
             font=("Helvetica", 14, "bold"), bg="#f0f0f0").pack(pady=10)
     
-    courses = sorted(list(optimized.keys()), key=lambda x: (x[1], x[0]))
-    
-    days = list(set(slot.split()[0] for slot in time_slots))
-    times = sorted(list(set(" ".join(slot.split()[1:]) for slot in time_slots)))
+    # Extract days and times from time_slots
+    # Use the order from selected_days, but only include days that are actually in time_slots
+    days_in_slots = [slot.split()[0] for slot in time_slots]
+    days = [day for day in selected_days if day in days_in_slots]
+    times = sorted({ " ".join(slot.split()[1:]) for slot in time_slots })
     
     tree_frame = tk.Frame(main_frame)
     tree_frame.pack(fill="both", expand=True)
@@ -774,24 +801,40 @@ def display_timetable(optimized, time_slots, selected_days, lecture_duration, se
     
     for col in columns:
         tree.heading(col, text=col)
-        tree.column(col, width=len(col) * 15, anchor="center")
+        tree.column(col, width=max(100, len(col) * 15), anchor="center")
     
+    # Insert empty rows for each time range
     for time_range in times:
         tree.insert("", "end", values=[time_range] + ["" for _ in days])
     
-    for (course, class_sec), details in optimized.items():
+    # Fill the timetable grid with GA results
+    for (course, class_sec, instance), details in optimized.items():
         slot = details['time_slot']
+        if not slot:
+            continue
         day, time_part = slot.split(" ", 1)
-        
+        # Find the row for this time_part
+        row_id = None
         for item_id in tree.get_children():
             if tree.item(item_id)["values"][0] == time_part:
                 row_id = item_id
                 break
-        
+        if row_id is None or day not in columns:
+            continue
         day_idx = columns.index(day)
         row_values = list(tree.item(row_id)["values"])
-        row_values[day_idx] = f"{course}\n{class_sec}\n{details['teacher']}\nRoom: {details['room']}"
-        
+        existing = row_values[day_idx]
+
+        new_entry = f"{details.get('course', course)}\n{details.get('class', class_sec)}\nInstance: {instance}\n{details.get('teacher', '')}\nRoom: {details.get('room', '')}"
+        print(f"Placing in cell [Day: {day}, Time: {time_part}]:\n{new_entry}\n")
+
+        # Append instead of overwrite
+        if existing and existing.strip():
+            # Only append if the new entry is not already present (avoid duplicates)
+            if new_entry not in existing:
+                row_values[day_idx] = existing + "\n---\n" + new_entry
+        else:
+            row_values[day_idx] = new_entry
         tree.item(row_id, values=row_values)
     
     vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
@@ -808,7 +851,9 @@ def display_timetable(optimized, time_slots, selected_days, lecture_duration, se
     tk.Button(btn_frame, text="Export to PDF", command=lambda: messagebox.showinfo("Export", 
                 "PDF export functionality could be implemented here"),
              bg="#0d6efd", fg="white", padx=20, pady=5).pack(side="right", padx=5)
-
+'''
+        
+    
 def save_to_db_ui():
     """
     Save only the current shift's timetable entries to the database.
@@ -858,13 +903,13 @@ def load_from_db_ui():
         return
 
     # Debug: Print semester and shift
-    print("Loading data for Semester:", semester_val, "Shift:", shift)
+    # print("Loading data for Semester:", semester_val, "Shift:", shift)
     
     # Load data from the database
     timetable_entries = load_timetable(semester_val, shift)
     
     # Debug: Print loaded entries
-    print("Loaded entries:", timetable_entries)
+    # print("Loaded entries:", timetable_entries)
     
     # Update the treeview with the loaded entries
     update_tt_treeview()
