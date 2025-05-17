@@ -624,7 +624,15 @@ def generate_timetable():
               font=("Helvetica", 10, "bold"), bg="#0d6efd", fg="white", padx=20, pady=5, borderwidth=0).pack(side="right", padx=5)
 
 
-def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_per_day, lecture_duration, start_time, end_time):
+def run_timetable_generation(
+    semester=2,
+    shift="Evening",
+    lectures_per_course=3,  # Most courses have 3 lectures
+    max_lectures_per_day=3,
+    lecture_duration=60,
+    start_time="1:00 PM",
+    end_time="6:00 PM"
+    ):
     try:
         # Determine which semesters to fetch based on the input
         if semester == "1-2":
@@ -659,12 +667,14 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
             return
 
         # Remap database rows into GA‐friendly format:
+        # Change this:
         ga_entries = [
             {
-                "course":        r["course_name"],
+                "course": r["course_name"],
                 "class_section": r["class_section_name"],
-                "room":          r["room_name"],
-                "teacher":       r["teacher_name"]
+                "room": r["room_name"],
+                "teacher": r["teacher_name"],
+                "semester": r["semester"]
             }
             for r in db_rows
         ]
@@ -715,68 +725,159 @@ def clear_entries_on_change(event):
 def display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift):
     win = tk.Toplevel(root)
     win.title(f"Optimized Timetable - Semester {semester} ({shift} Shift)")
-    win.geometry("1000x600")
+    win.geometry("1400x800")
     
     main_frame = tk.Frame(win, padx=20, pady=20)
     main_frame.pack(fill="both", expand=True)
-    
-    header_frame = tk.Frame(main_frame, bg="#f0f0f0")
-    header_frame.pack(fill="x", pady=(0, 20))
-    
-    tk.Label(header_frame, text=f"Semester {semester} - {shift} Shift", 
-            font=("Helvetica", 14, "bold"), bg="#f0f0f0").pack(pady=10)
-    
-    courses = sorted(list(optimized.keys()), key=lambda x: (x[1], x[0]))
-    
-    days = list(set(slot.split()[0] for slot in time_slots))
-    times = sorted(list(set(" ".join(slot.split()[1:]) for slot in time_slots)))
-    
-    tree_frame = tk.Frame(main_frame)
-    tree_frame.pack(fill="both", expand=True)
-    
-    columns = ["Time"] + days
-    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=len(times))
-    
-    for col in columns:
-        tree.heading(col, text=col)
-        tree.column(col, width=len(col) * 15, anchor="center")
-    
-    for time_range in times:
-        tree.insert("", "end", values=[time_range] + ["" for _ in days])
-    
-    for (course, class_sec, _), details in optimized.items():
-        slot = details['time_slot']
-        day, time_part = slot.split(" ", 1)
 
-        row_id = None
-        for item_id in tree.get_children():
-            if tree.item(item_id)["values"][0] == time_part:
-                row_id = item_id
-                break
+    # Create a frame for row height control
+    control_frame = tk.Frame(main_frame, pady=10)
+    control_frame.grid(row=2, column=0, sticky="w", columnspan=2)
+    
+    # Add row height slider
+    tk.Label(control_frame, text="Row Height:").pack(side="left", padx=(0, 5))
+    row_height_var = tk.IntVar(value=80)  # Default row height
+    
+    def update_row_height(event=None):
+        height = row_height_var.get()
+        style = ttk.Style()
+        style.configure("Timetable.Treeview", rowheight=height)
+        
+    row_height_slider = ttk.Scale(control_frame, from_=60, to=150, 
+                                  orient="horizontal", length=200, 
+                                  variable=row_height_var, command=update_row_height)
+    row_height_slider.pack(side="left")
+    
+    # Display current value
+    row_height_label = tk.Label(control_frame, text="80")
+    row_height_label.pack(side="left", padx=5)
+    
+    # Update label when slider changes
+    def update_height_label(event):
+        row_height_label.config(text=str(int(row_height_var.get())))
+        
+    row_height_slider.bind("<Motion>", update_height_label)
+    
+    # Check box for enabling manual row resize
+    enable_resize_var = tk.BooleanVar(value=True)
+    enable_resize_cb = tk.Checkbutton(control_frame, text="Enable Manual Row Resize", 
+                                      variable=enable_resize_var, 
+                                      command=lambda: toggle_resize_grip())
+    enable_resize_cb.pack(side="left", padx=(20, 0))
+    
+    # Function to toggle row resize grip visibility
+    def toggle_resize_grip():
+        if enable_resize_var.get():
+            style.configure("Timetable.Treeview", gripvisible=True)
+        else:
+            style.configure("Timetable.Treeview", gripvisible=False)
 
-        if row_id is None:
-            continue  # Skip this slot if not found in the treeview rows
+    # Map days to numbers
+    day_number_map = {
+        "Monday": "1",
+        "Tuesday": "2", 
+        "Wednesday": "3", 
+        "Thursday": "4", 
+        "Friday": "5", 
+        "Saturday": "6"
+    }
 
-        day_idx = columns.index(day)
-        row_values = list(tree.item(row_id)["values"])
-        row_values[day_idx] = f"{course}\n{class_sec}\n{details['teacher']}\nRoom: {details['room']}"
+    # Create sorted list of time slots (columns) with time only (no day number)
+    days_order = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, 
+                 "Thursday": 3, "Friday": 4, "Saturday": 5}
+    time_slots_sorted = sorted(
+        {details['time_slot'] for details in optimized.values()},
+        key=lambda x: (days_order[x.split()[0]], x.split()[1])
+    )
 
-        tree.item(row_id, values=row_values)
+    # Group entries by semester and class_section
+    semester_class_groups = {}
+    for (_, _, _), details in optimized.items():
+        sem = details.get('semester', semester)  # Fallback to main semester if not found
+        class_section = details.get('class_section', 'Default')  # Get class section
+        key = (sem, class_section)  # Create composite key
+        
+        if key not in semester_class_groups:
+            semester_class_groups[key] = []
+        semester_class_groups[key].append(details)
+
+    # Create Treeview with custom style for increased row height and row resize
+    style = ttk.Style()
+    style.configure("Timetable.Treeview", rowheight=80, gripvisible=True)  # Enable row resize
     
-    vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-    tree.configure(yscrollcommand=vsb.set)
-    vsb.pack(side="right", fill="y")
-    tree.pack(fill="both", expand=True)
+    # Create column headers with time only
+    columns = ["Semester"]
+    column_headers = ["Semester"]
     
-    btn_frame = tk.Frame(main_frame, pady=10)
-    btn_frame.pack(fill="x")
+    time_slots_by_day = {}
+    for ts in time_slots_sorted:
+        day_name = ts.split()[0]
+        time_part = ts.split(" ", 1)[1]
+        
+        if day_name not in time_slots_by_day:
+            time_slots_by_day[day_name] = []
+        time_slots_by_day[day_name].append(ts)
+        
+        # Use just the time for column headers
+        columns.append(ts)  # Keep original timeslot as column id
+        column_headers.append(time_part)  # Use time part only for header
     
-    tk.Button(btn_frame, text="Close", command=win.destroy, 
-             bg="#f0f0f0", padx=20, pady=5).pack(side="right", padx=5)
+    tree = ttk.Treeview(main_frame, columns=columns, show="headings", height=15, style="Timetable.Treeview")
     
-    tk.Button(btn_frame, text="Export to PDF", command=lambda: messagebox.showinfo("Export", 
-                "PDF export functionality could be implemented here"),
-             bg="#0d6efd", fg="white", padx=20, pady=5).pack(side="right", padx=5)
+    # Configure columns
+    tree.column("Semester", width=150, anchor='w')
+    tree.heading("Semester", text="Semester")
+    
+    # Set column headers with just time
+    for i, col in enumerate(columns[1:], 1):
+        tree.column(col, width=150, anchor='center')
+        tree.heading(col, text=column_headers[i])
+
+    # Add data rows with one row per semester and class
+    for (sem, class_section), entries in semester_class_groups.items():
+        time_slot_map = {ts: [] for ts in time_slots_sorted}
+        
+        for entry in entries:
+            ts = entry['time_slot']
+            day_name = ts.split()[0]
+            day_number = day_number_map.get(day_name, "?")
+            
+            # Include week number with subject name
+            course_info = f"{entry['course']} ({day_number})\n{entry['teacher']}\n{entry['room']}"
+            time_slot_map[ts].append(course_info)
+        
+        # Include class/section with semester and shift in first column
+        row_values = [f"Semester {sem} - {class_section} ({shift})"]
+        for ts in time_slots_sorted:
+            cell_text = "\n\n".join(time_slot_map[ts]) if time_slot_map[ts] else ""
+            row_values.append(cell_text)
+            
+        tree.insert("", "end", values=row_values)
+
+    # Add scrollbars
+    vsb = ttk.Scrollbar(main_frame, orient="vertical", command=tree.yview)
+    hsb = ttk.Scrollbar(main_frame, orient="horizontal", command=tree.xview)
+    tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+    # Grid layout
+    tree.grid(row=0, column=0, sticky="nsew")
+    vsb.grid(row=0, column=1, sticky="ns")
+    hsb.grid(row=1, column=0, sticky="ew")
+
+    # Configure grid resizing
+    main_frame.grid_rowconfigure(0, weight=1)
+    main_frame.grid_columnconfigure(0, weight=1)
+
+    # Footer buttons
+    btn_frame = tk.Frame(win, pady=10)
+    btn_frame.pack()
+    
+    tk.Button(btn_frame, text="Export to PDF", 
+             command=lambda: messagebox.showinfo("Export", "Use reportlab library to generate PDF"),
+             bg="#0d6efd", fg="white", padx=20, pady=5).pack(side="left", padx=5)
+    
+    tk.Button(btn_frame, text="Close", command=win.destroy,
+             bg="#6c757d", fg="white", padx=20, pady=5).pack(side="left", padx=5)
 
 def save_to_db_ui():
     """

@@ -31,7 +31,10 @@ class TimetableGeneticAlgorithm:
         self.entries = entries
         if not self.entries:
             raise ValueError("No timetable entries provided to GA.")
-        
+        self.room_capacities = {  # Add room capacity data
+        "71": 40, "72": 35, "73": 30, 
+        "74": 45, "77": 50, "80": 40
+        }
         self.POPULATION_SIZE = population_size
         self.MAX_GENERATIONS = max_generations
         self.MUTATION_RATE = mutation_rate
@@ -84,35 +87,26 @@ class TimetableGeneticAlgorithm:
     def _create_random_timetable(self):
         """Create a single random timetable assignment with better distribution."""
         timetable = {}
-        courses_by_section = {}
-            
-        # First pass: group courses by section
-        for entry in self.entries:
-            key = (entry['course'], entry['class_section'])
-            if entry['class_section'] not in courses_by_section:
-                courses_by_section[entry['class_section']] = []
-            courses_by_section[entry['class_section']].append(entry['course'])
         
-        # Second pass: create multiple entries per course (lectures_per_course times)
         for entry in self.entries:
             course = entry['course']
             section = entry['class_section']
-            key = (course, section)
             
             # Create multiple lecture instances for each course
             for i in range(self.LECTURES_PER_COURSE):
                 lecture_key = (course, section, i)
                 
-                # Try to distribute across different days
+                # Get available time slots for this course/section
                 available_slots = self._get_distributed_time_slot(timetable, course, section)
                 chosen_slot = random.choice(available_slots) if available_slots else random.choice(self.unique_time_slots)
                 
                 timetable[lecture_key] = {
+                    'course': course,
                     'time_slot': chosen_slot,
                     'room': entry['room'],
-                    'teacher': entry['teacher']
+                    'teacher': entry['teacher'],
+                    'semester': entry.get('semester', 1)
                 }
-                
         return timetable
 
     def _get_distributed_time_slot(self, timetable, course, section):
