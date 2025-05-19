@@ -844,10 +844,140 @@ def display_timetable(optimized_timetable_data, available_time_slots,
              bg="#6c757d", fg="white", padx=15, pady=5, font=('Helvetica', 10)).pack(side="right", padx=10)
 
 
-def export_to_pdf(timetable_data, time_slots_cols, grouped_display_data, metadata, title):
+def export_to_pdf(optimized_timetable_data, available_time_slots, 
+                  grouped_display_data, # This original grouping is not directly used in the new logic
+                  metadata, title):
     if not REPORTLAB_AVAILABLE:
         messagebox.showerror("Missing Library", "ReportLab library is not installed. Cannot export to PDF.")
         return
+
+    day_to_num = {"Monday": 1, "Tuesday": 2, "Wednesday": 3, "Thursday": 4, "Friday": 5, "Saturday": 6}
+    
+    def format_day_numbers(day_numbers):
+        if not day_numbers: return ""
+        sorted_unique_days = sorted(list(set(day_numbers)))
+        if not sorted_unique_days: return ""
+        
+        ranges = []
+        start_range = sorted_unique_days[0]
+        for i in range(1, len(sorted_unique_days)):
+            if sorted_unique_days[i] == sorted_unique_days[i-1] + 1:
+                continue
+            else:
+                end_range = sorted_unique_days[i-1]
+                if start_range == end_range:
+                    ranges.append(str(start_range))
+                else:
+                    ranges.append(f"{start_range}-{end_range}")
+                start_range = sorted_unique_days[i]
+        
+        end_range = sorted_unique_days[-1]
+        if start_range == end_range:
+            ranges.append(str(start_range))
+        else:
+            ranges.append(f"{start_range}-{end_range}")
+        return f"({','.join(ranges)})"
+
+    mon_sat_time_ranges_ordered = []
+    friday_time_ranges_ordered = []
+    temp_mon_sat_periods = set()
+    temp_fri_periods = set()
+
+    def sort_slot_key(slot_str):
+        day_order = {"Monday":0, "Tuesday":1, "Wednesday":2, "Thursday":3, "Friday":4, "Saturday":5, "Sunday":6}
+        parts = slot_str.split(" ", 1)
+        day = parts[0]
+        time_part = parts[1].split("-")[0] 
+        try:
+            dt_time = datetime.strptime(time_part.strip(), "%I:%M %p")
+        except ValueError:
+            dt_time = datetime.strptime("12:00 AM", "%I:%M %p") 
+            print(f"Warning: Could not parse time for sorting: '{time_part}' from slot '{slot_str}'")
+        return (day_order.get(day, 99), dt_time)
+
+    sorted_available_time_slots = sorted(list(set(available_time_slots)), key=sort_slot_key)
+
+    for slot_str in sorted_available_time_slots:
+        try:
+            day_part, time_range_part = slot_str.split(" ", 1)
+        except ValueError:
+            print(f"Warning: Could not split slot string: '{slot_str}'. Skipping.")
+            continue
+            
+        if day_part == "Friday":
+            if time_range_part not in temp_fri_periods:
+                friday_time_ranges_ordered.append(time_range_part)
+                temp_fri_periods.add(time_range_part)
+        else: 
+            if time_range_part not in temp_mon_sat_periods:
+                mon_sat_time_ranges_ordered.append(time_range_part)
+                temp_mon_sat_periods.add(time_range_part)
+    
+    if mon_sat_time_ranges_ordered:
+        conceptual_column_defining_ranges = mon_sat_time_ranges_ordered
+    elif friday_time_ranges_ordered: 
+        conceptual_column_defining_ranges = friday_time_ranges_ordered
+    else:
+        messagebox.showerror("PDF Export Error", "No time slots available to define columns.")
+        return
+        
+    num_conceptual_cols = len(conceptual_column_defining_ranges)
+    if num_conceptual_cols == 0:
+        messagebox.showerror("PDF Export Error", "Zero conceptual columns derived. Cannot generate PDF.")
+        return
+
+    roman_numerals = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"] 
+    conceptual_col_labels = roman_numerals[:num_conceptual_cols]
+
+    time_range_to_conceptual_idx_map = {} 
+    for i, tr_ms in enumerate(mon_sat_time_ranges_ordered):
+        if i < num_conceptual_cols: 
+            time_range_to_conceptual_idx_map[("MonSat", tr_ms)] = i
+    for i, tr_f in enumerate(friday_time_ranges_ordered):
+        if i < num_conceptual_cols: 
+            time_range_to_conceptual_idx_map[("Friday", tr_f)] = i
+
+    processed_data = {}
+    all_class_sections_keys = set() 
+    class_to_room_map = {} # CHANGE: Initialize map to store room per class/section
+
+    for lecture_instance_key, details in optimized_timetable_data.items():
+        semester = details.get('semester', 'N/A') 
+        class_section = details['class_section']
+        class_key = (semester, class_section)
+        all_class_sections_keys.add(class_key)
+
+        # CHANGE: Store room for this class_key (picks room from first encountered lecture for the class)
+        if class_key not in class_to_room_map:
+            class_to_room_map[class_key] = str(details['room'])
+
+        full_slot_str = details['time_slot']
+        try:
+            day_str, time_range_str = full_slot_str.split(" ", 1)
+        except ValueError:
+            print(f"Warning: Malformed time_slot '{full_slot_str}' for {details['course_name']}. Skipping this entry in PDF.")
+            continue
+            
+        day_type = "Friday" if day_str == "Friday" else "MonSat"
+        conceptual_col_idx = time_range_to_conceptual_idx_map.get((day_type, time_range_str))
+
+        if conceptual_col_idx is None:
+            continue
+
+        day_num = day_to_num.get(day_str)
+        if day_num is None:
+            continue
+            
+        # CHANGE: lecture_tuple no longer includes room, as room is per row.
+        lecture_tuple = (
+            details['course_name'],
+            details.get('course_code', 'N/A'),
+            details.get('course_indicators', ''),
+            details['teacher']
+        )
+        processed_data.setdefault(class_key, {}).setdefault(conceptual_col_idx, {}).setdefault(lecture_tuple, []).append(day_num)
+
+    sorted_class_section_keys = sorted(list(all_class_sections_keys))
 
     filepath = filedialog.asksaveasfilename(
         defaultextension=".pdf",
@@ -857,52 +987,111 @@ def export_to_pdf(timetable_data, time_slots_cols, grouped_display_data, metadat
     if not filepath: return
 
     try:
-        doc = SimpleDocTemplate(filepath, pagesize=(20*inch, 15*inch))
+        doc = SimpleDocTemplate(filepath, pagesize=(20*inch, 15*inch)) 
         story = []
         styles = getSampleStyleSheet()
-
+        
+        styles['h1'].alignment = 1 
+        styles['h2'].alignment = 1 
+        styles['Normal'].alignment = 1 
+        
         story.append(Paragraph(metadata.get("college_name", ""), styles['h1']))
         story.append(Paragraph(title, styles['h2']))
         story.append(Paragraph(f"Effective Date: {metadata.get('effective_date', '')}", styles['Normal']))
         story.append(Paragraph(f"Department: {metadata.get('department_name', '')}", styles['Normal']))
         story.append(Spacer(1, 0.2*inch))
 
-        header_row = ["Class/Section"] + [ts.replace(" ", "\n") for ts in time_slots_cols]
-        table_data = [header_row]
+        header_para_style = styles['Normal'].clone('HeaderParaStyle')
+        header_para_style.fontName = 'Helvetica-Bold'
+        header_para_style.fontSize = 8
+        header_para_style.alignment = 1 
+        header_para_style.leading = 10
 
-        sorted_group_keys = sorted(list(grouped_display_data.keys()))
-        for sem_label_class_key in sorted_group_keys:
-            semester_label, class_section = sem_label_class_key
-            display_first_col_pdf = f"{semester_label} - {class_section}"
-            if not semester_label: display_first_col_pdf = class_section
-            # For PDF, wrap first column text in Paragraph for better formatting possibilities
-            row = [Paragraph(display_first_col_pdf.replace("\n", "<br/>\n"), styles['Normal'])] # Allow newlines in first column
-            slot_data_for_row = grouped_display_data[sem_label_class_key]
-            for ts_col in time_slots_cols:
-                cell_lectures = slot_data_for_row.get(ts_col, [])
-                cell_content_str = "\n".join(cell_lectures)
-                # Wrap cell content in Paragraph for consistent styling and newline handling
-                row.append(Paragraph(cell_content_str.replace('\n', '<br/>\n'), styles['Normal']))
-            table_data.append(row)
+        pdf_header_row1 = [Paragraph("", header_para_style)] + \
+                          [Paragraph(label, header_para_style) for label in conceptual_col_labels]
+        
+        ms_times_for_header = conceptual_column_defining_ranges[:num_conceptual_cols]
+        ms_times_for_header += [""] * (num_conceptual_cols - len(ms_times_for_header))
+        pdf_header_row2 = [Paragraph("Mon to Sat", header_para_style)] + \
+                          [Paragraph(tr.replace("-", "-<br/>"), header_para_style) for tr in ms_times_for_header]
 
-        num_ts_cols = len(time_slots_cols)
-        col_widths = [2.5*inch] + [(16.5*inch) / num_ts_cols if num_ts_cols > 0 else 1*inch] * num_ts_cols
+        f_times_for_header = friday_time_ranges_ordered[:num_conceptual_cols] 
+        f_times_for_header += [""] * (num_conceptual_cols - len(f_times_for_header))
+        pdf_header_row3 = [Paragraph("Friday", header_para_style)] + \
+                          [Paragraph(tr.replace("-", "-<br/>"), header_para_style) for tr in f_times_for_header]
 
-        pdf_table = Table(table_data, colWidths=col_widths)
-        pdf_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), reportlab_colors.grey),
-            ('TEXTCOLOR', (0,0), (-1,0), reportlab_colors.whitesmoke),
-            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        table_data = [pdf_header_row1, pdf_header_row2, pdf_header_row3]
+        
+        first_col_para_style = styles['Normal'].clone('FirstColParaStyle')
+        first_col_para_style.fontSize = 8
+        first_col_para_style.fontName = 'Helvetica-Bold'
+        first_col_para_style.alignment = 0 
+        first_col_para_style.leading = 10
+
+        cell_para_style = styles['Normal'].clone('CellParaStyle')
+        cell_para_style.fontSize = 7
+        cell_para_style.leading = 9 
+        cell_para_style.alignment = 1 
+
+        for class_key in sorted_class_section_keys:
+            semester_label, class_section_name = class_key
+            
+            # CHANGE: Get the room for this class/section
+            room_for_this_class = class_to_room_map.get(class_key, "N/A") 
+
+            display_first_col_text = f"{semester_label} - {class_section_name}"
+            if not semester_label or semester_label == 'N/A': 
+                display_first_col_text = class_section_name
+            # CHANGE: Append room to the class/section name
+            display_first_col_text += f"<br/>ROOM #{room_for_this_class}"
+            
+            row_content = [Paragraph(display_first_col_text, first_col_para_style)]
+            class_data_for_conceptual_cols = processed_data.get(class_key, {})
+
+            for i in range(num_conceptual_cols):
+                lectures_in_cell = class_data_for_conceptual_cols.get(i, {})
+                cell_parts = []
+                if lectures_in_cell:
+                    sorted_lectures_in_cell = sorted(lectures_in_cell.items(), key=lambda item: item[0][0])
+
+                    for lecture_tuple_from_items, day_nums in sorted_lectures_in_cell: 
+                        # CHANGE: Unpack lecture_tuple (which no longer contains room)
+                        course_name, course_code, indicators, teacher = lecture_tuple_from_items 
+                        day_range_str = format_day_numbers(day_nums)
+                        
+                        indicator_str_inline = f" {indicators}" if indicators else ""
+                        # CHANGE: lecture_str no longer includes room details
+                        lecture_str = f"{course_name} ({course_code}){day_range_str}{indicator_str_inline}<br/>{teacher}"
+                        cell_parts.append(lecture_str)
+                
+                row_content.append(Paragraph("<br/>---<br/>".join(cell_parts), cell_para_style)) 
+            table_data.append(row_content)
+
+        first_col_width = 2.2 * inch 
+        remaining_width = (doc.width - first_col_width)
+        avg_col_width = remaining_width / num_conceptual_cols if num_conceptual_cols > 0 else remaining_width
+        col_widths = [first_col_width] + [avg_col_width] * num_conceptual_cols
+
+        pdf_table = Table(table_data, colWidths=col_widths, repeatRows=3) 
+        
+        table_style_cmds = [
+            ('GRID', (0,0), (-1,-1), 0.5, reportlab_colors.black),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 7),
-            ('BOTTOMPADDING', (0,0), (-1,0), 10),
-            ('BACKGROUND', (0,1), (-1,-1), reportlab_colors.beige),
-            ('GRID', (0,0), (-1,-1), 1, reportlab_colors.black),
-            ('WORDWRAP', (0,0), (-1,-1)), # Ensure this is effective; Paragraphs handle their own wrapping.
-            ('LEFTPADDING', (0,1), (0,-1), 6), # Adjusted padding for first column items
-            ('ALIGN', (0,1), (0,-1), 'LEFT'),   # Align first column content to left
-        ]))
+            ('BACKGROUND', (0,0), (-1,2), reportlab_colors.white), 
+            ('TEXTCOLOR', (0,0), (-1,-1), reportlab_colors.black), 
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), 
+            ('FONTSIZE', (0,0), (-1,0), 9),            
+            ('LINEBELOW', (0,0), (-1,0), 1, reportlab_colors.black), 
+            ('FONTNAME', (0,1), (-1,2), 'Helvetica-Bold'), 
+            ('FONTSIZE', (0,1), (-1,2), 7),              
+            ('LINEBELOW', (0,2), (-1,2), 1.5, reportlab_colors.black),
+            ('LEFTPADDING', (0,0), (-1,-1), 3),
+            ('RIGHTPADDING', (0,0), (-1,-1), 3),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+            ('BACKGROUND', (0,3), (-1,-1), reportlab_colors.white), 
+        ]
+        pdf_table.setStyle(TableStyle(table_style_cmds))
         story.append(pdf_table)
 
         doc.build(story)
