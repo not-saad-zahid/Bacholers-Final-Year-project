@@ -57,10 +57,6 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
 
     root = master
 
-    # Initialize database connection from timetable_db.py
-    # The conn object in timetable_db is used internally by its functions.
-    # This conn is for UI-specific direct operations if any, or can be removed if all DB ops go via timetable_db functions.
-    # For now, keeping it as it was, but ensuring fetch_id_from_name is called correctly.
     conn = init_timetable_db() # This initializes the connection in timetable_db and returns it.
 
     TT_header_frame = tk.Frame(root, bg="#0d6efd", height=60)
@@ -151,9 +147,9 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     scrollbar.pack(side='right', fill='y')
 
     tt_treeview.bind("<Double-1>", edit_tt_entry)
-    tt_treeview.bind("<Button-1>", clear_selection)
-    left.bind_all("<Button-1>", clear_selection_if_outside_tree, add="+")
-    right.bind_all("<Button-1>", clear_selection_if_outside_tree, add="+")
+    # tt_treeview.bind("<Button-1>", clear_selection)
+    # left.bind_all("<Button-1>", clear_selection_if_outside_tree, add="+")
+    # right.bind_all("<Button-1>", clear_selection_if_outside_tree, add="+")
 
     btn_frame = tk.Frame(right, bg="#f8f9fa")
     btn_frame.pack(fill='x', pady=10)
@@ -182,10 +178,6 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
 
     update_tt_treeview()
 
-# fetch_name_from_id is not present in the latest UI code you provided in the previous turn.
-# If it were here, it would also need to ensure it does not pass 'conn'.
-# However, this function seems to be correctly placed and used within timetable_db.py.
-
 def clear_all_tt_entries():
     global timetable_entries, editing_index
     if not timetable_entries:
@@ -200,6 +192,8 @@ def clear_all_tt_entries():
 
 def save_tt_entry():
     global editing_index, timetable_entries
+    
+    # Get form values
     teacher_name = tt_teacher_entry.get().strip()
     course_name = tt_course_entry.get().strip()
     course_code = tt_course_code_entry.get().strip()
@@ -209,13 +203,13 @@ def save_tt_entry():
     semester_label = tt_semester_entry.get().strip()
     shift = shift_cb.get().strip()
 
+    # Validation check
     if not all([teacher_name, course_name, course_code, room_name, class_section_name, semester_label, shift]):
         messagebox.showwarning("Missing Fields", "All fields except Indicators must be filled.")
-        return
+        return False
 
     if not teacher_name.replace(" ", "").isalpha():
         messagebox.showwarning("Invalid Teacher Name", "Teacher name should primarily contain letters.")
-        # return
     if not course_code.isalnum() and '-' not in course_code:
         messagebox.showwarning("Invalid Course Code", "Course code should be alphanumeric (e.g., CS101, CC-214).")
         return
@@ -243,27 +237,25 @@ def save_tt_entry():
         "class_section_id": None
     }
 
-    if editing_index is not None:
+    if editing_index is not None and 0 <= editing_index < len(timetable_entries):
+        # Update existing entry
         timetable_entries[editing_index] = entry_data
         action = "updated"
-        # Keep editing_index to allow further edits on the same item if desired,
-        # or set editing_index = None if one save-edit operation is final.
-        # For now, let's assume user might want to make multiple quick changes before selecting another.
     else:
+        # Add new entry
         timetable_entries.append(entry_data)
         action = "added"
 
+    # Clear form and reset editing state
+    clear_tt_form()
+    
+    # Update display
     update_tt_treeview()
-    # clear_tt_form() # MODIFICATION: Removed this line to prevent clearing fields
-    if action == "added": # Optionally, only clear form if it was a new add, not an update
-        pass # Or specific fields could be cleared, e.g. tt_course_entry.delete(0, tk.END)
     messagebox.showinfo("Success", f"Entry {action} successfully.")
+    return True
 
 
 def save_timetable_from_treeview():
-    # This global conn is from init_timetable_db() called in this UI file.
-    # However, fetch_id_from_name uses the conn defined in timetable_db.py
-    # No need to pass conn to fetch_id_from_name.
     global timetable_entries # Removed conn from here as it's not passed.
 
     current_semester_label = tt_semester_entry.get().strip()
@@ -292,21 +284,6 @@ def save_timetable_from_treeview():
 
     saved_count = 0
     failed_count = 0
-    
-    # Use the connection object initialized for this module if direct DB operations are done here.
-    # Or, rely entirely on timetable_db.py functions to handle their own connection.
-    # For fetch_id_from_name, it uses its own connection. For direct conn.execute, use self.conn or global conn.
-    # The `with conn:` block implies using the global conn from this file (timetable_ui.py)
-    # which should be the one returned by init_timetable_db().
-    # This is fine as long as init_timetable_db() correctly sets up the connection used by fetch_id_from_name too.
-    # The critical change is NOT passing conn to fetch_id_from_name.
-
-    # The 'conn' object used by fetch_id_from_name is the one within timetable_db.py.
-    # The 'conn.execute' and 'conn.commit' below refer to the 'conn' object in timetable_ui.py
-    # This assumes init_timetable_db() in timetable_db.py returns the connection object that it also uses internally.
-    # Let's verify this assumption or adjust.
-    # In timetable_db.py: conn = sqlite3.connect(...) is global. init_timetable_db() returns this conn.
-    # So, the conn object in timetable_ui.py and timetable_db.py refers to the SAME database connection.
     
     with conn: # This uses the 'conn' from timetable_ui.py's global scope
         for entry in entries_to_save:
@@ -402,127 +379,90 @@ def update_tt_treeview():
 
 def delete_tt_entry():
     global timetable_entries, editing_index
+    
     selected_items = tt_treeview.selection()
+    
     if not selected_items:
-        messagebox.showwarning("Selection Error", "Please select an entry to delete.")
-        return
-
-    if not messagebox.askyesno("Confirm Delete", "Are you sure you want to delete the selected entry from the current list? This does not delete from the database until saved."):
-        return
-
+        messagebox.showwarning("Selection Error", "Please select an entry to delete first.")
+        return False
+        
     selected_iid = selected_items[0]
-    selected_values = tt_treeview.item(selected_iid, 'values')
-
-    entry_to_delete_tuple = (
-        selected_values[1], # Semester/Label (string)
-        selected_values[2], # Shift
-        selected_values[3], # Class
-        selected_values[4], # Teacher
-        selected_values[5], # Course
-        selected_values[6], # Code
-        selected_values[7], # Indicators
-        selected_values[8]  # Room
-    )
-
-    original_index_to_delete = -1
-    for idx, entry in enumerate(timetable_entries):
-        entry_tuple = (
-            entry.get('semester'),
-            entry.get('shift'),
-            entry.get('class_section_name'),
-            entry.get('teacher_name'),
-            entry.get('course_name'),
-            entry.get('course_code'),
-            entry.get('course_indicators'),
-            str(entry.get('room_name'))
-        )
-        if entry_tuple == entry_to_delete_tuple: # Direct comparison
-            original_index_to_delete = idx
-            break
-
-    if original_index_to_delete != -1:
-        timetable_entries.pop(original_index_to_delete)
-        if editing_index is not None and editing_index == original_index_to_delete :
-            editing_index = None
-            clear_tt_form()
-        elif editing_index is not None and editing_index > original_index_to_delete:
-            editing_index -=1
-
-        update_tt_treeview()
-        messagebox.showinfo("Success", "Entry deleted from the current list.")
-    else:
-        messagebox.showerror("Error", "Could not find the selected entry in the main list to delete. Try refreshing.")
+    
+    try:
+        index = int(selected_iid)
+        if 0 <= index < len(timetable_entries):
+            if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this entry?"):
+                timetable_entries.pop(index)
+                if editing_index is not None:
+                    if editing_index == index:
+                        editing_index = None
+                        clear_tt_form()
+                    elif editing_index > index:
+                        editing_index -= 1
+                update_tt_treeview()
+                messagebox.showinfo("Success", "Entry deleted successfully.")
+                return True
+    except (ValueError, IndexError):
+        messagebox.showerror("Error", "Invalid selection index.")
+    
+    return False
 
 
 def edit_tt_entry(event):
     global editing_index
+    
     selected_items = tt_treeview.selection()
     if not selected_items:
+        return
+    
+    try:
+        selected_iid = selected_items[0]
+        index = int(selected_iid)
+        
+        if 0 <= index < len(timetable_entries):
+            editing_index = index
+            entry_to_edit = timetable_entries[index]
+            
+            # Clear and populate form
+            clear_tt_form()
+            
+            # Update form fields
+            tt_semester_entry.insert(0, entry_to_edit.get('semester', ''))
+            shift_cb.set(entry_to_edit.get('shift', 'Morning'))
+            tt_class_entry.insert(0, entry_to_edit.get('class_section_name', ''))
+            tt_teacher_entry.insert(0, entry_to_edit.get('teacher_name', ''))
+            tt_course_entry.insert(0, entry_to_edit.get('course_name', ''))
+            tt_course_code_entry.insert(0, entry_to_edit.get('course_code', ''))
+            tt_indicators_entry.insert(0, entry_to_edit.get('course_indicators', ''))
+            tt_room_entry.insert(0, str(entry_to_edit.get('room_name', '')))
+            
+            # Ensure editing_index is set
+            editing_index = index
+            
+    except (ValueError, IndexError):
+        messagebox.showerror("Error", "Invalid selection index.")
+        clear_tt_form()
         editing_index = None
-        return
 
-    selected_iid = selected_items[0]
-
-    current_semester_label = tt_semester_entry.get().strip()
-    current_shift = shift_cb.get()
-
-    filtered_view_index = -1
-    # Correctly find the index in the currently displayed items in the treeview
-    displayed_children = tt_treeview.get_children()
-    for i, child_iid in enumerate(displayed_children):
-        if child_iid == selected_iid:
-            filtered_view_index = i
-            break
-
-    if filtered_view_index == -1:
-        messagebox.showerror("Error", "Could not identify selected item's view index.")
-        return
-
-    count_matching_filter = 0
-    original_idx_for_editing = -1
-    for idx, entry in enumerate(timetable_entries):
-        if entry.get('shift') == current_shift and \
-           (not current_semester_label or entry.get('semester') == current_semester_label):
-            if count_matching_filter == filtered_view_index:
-                original_idx_for_editing = idx
-                break
-            count_matching_filter += 1
-
-    if original_idx_for_editing == -1:
-        messagebox.showerror("Error", "Failed to map selected treeview item to main data list for editing.")
-        return
-
-    editing_index = original_idx_for_editing
-    entry_to_edit = timetable_entries[editing_index]
-
-    clear_tt_form()
-    tt_semester_entry.insert(0, entry_to_edit.get('semester', ''))
-    shift_cb.set(entry_to_edit.get('shift', ''))
-    tt_class_entry.insert(0, entry_to_edit.get('class_section_name', ''))
-    tt_teacher_entry.insert(0, entry_to_edit.get('teacher_name', ''))
-    tt_course_entry.insert(0, entry_to_edit.get('course_name', ''))
-    tt_course_code_entry.insert(0, entry_to_edit.get('course_code', ''))
-    tt_indicators_entry.insert(0, entry_to_edit.get('course_indicators', ''))
-    tt_room_entry.insert(0, str(entry_to_edit.get('room_name', '')))
 
 def clear_selection_if_outside_tree(event):
     widget = event.widget
-    if widget == tt_treeview or (hasattr(widget, 'master') and widget.master == tt_treeview):
+    if widget == tt_treeview:
         return
-
+        
+    # Check if click is in an entry widget or combobox
     interactive_widgets = [
-        tt_teacher_entry, tt_course_entry, tt_course_code_entry, tt_indicators_entry,
-        tt_room_entry, tt_class_entry, tt_semester_entry, shift_cb,
+        tt_teacher_entry, tt_course_entry, tt_course_code_entry, 
+        tt_indicators_entry, tt_room_entry, tt_class_entry, 
+        tt_semester_entry, shift_cb
     ]
-    if widget in interactive_widgets or (hasattr(widget, 'master') and widget.master in interactive_widgets):
+    
+    if widget in interactive_widgets or widget.winfo_parent() in [w.winfo_parent() for w in interactive_widgets]:
         return
-
-    if tt_treeview.selection():
-        if not tt_treeview.identify_row(event.y):
-            tt_treeview.selection_remove(tt_treeview.selection())
-            clear_tt_form()
-            global editing_index
-            editing_index = None
+        
+    # Clear selection and form if click is outside
+    tt_treeview.selection_remove(tt_treeview.selection())
+    clear_tt_form()
 
 
 def clear_selection(event):
@@ -723,20 +663,6 @@ def run_timetable_generation(shift, lectures_per_course, max_lectures_per_day,
 
 def clear_entries_on_change(event, changed_field):
     global editing_index
-    # This function is bound to FocusOut/Return on semester_entry and selection of shift_cb.
-    # Its primary purpose should be to refresh the treeview if the filters change.
-    # Avoid clearing the form if the user is actively editing and just tabs out.
-    
-    # If we are in editing mode, changing a filter might be confusing.
-    # For now, simply update the treeview. Aggressive form clearing can be frustrating.
-    # if editing_index is not None:
-    #     response = messagebox.askyesno("Confirm", "Changing filters while editing may discard unsaved changes in the form. Continue and clear form?")
-    #     if response:
-    #         clear_tt_form() # Clears form and editing_index
-    #     else:
-    #         # Attempt to revert the change that triggered this event might be complex.
-    #         # For now, if user says no, we do nothing and the filter change might be visually inconsistent with form.
-    #         return
     update_tt_treeview()
 
 
@@ -1197,20 +1123,12 @@ def load_from_db_ui():
     if not messagebox.askyesno("Confirm Load", confirm_msg):
         return
     
-    # The db load_timetable function should handle if semester_label is empty string or None
-    # to mean "all semester labels for the given shift".
-    # The current `timetable_db.py` `load_timetable` signature is:
-    # def load_timetable(shift, semester_label=None):
-    # This means an empty string "" for semester_label would be treated as a specific label.
-    # If we want an empty entry in UI to mean "any label for this shift", we pass None.
     label_to_load = current_semester_label if current_semester_label else None
 
     print(f"Loading entries from DB for Shift: {current_shift}, Label: '{label_to_load if label_to_load else 'Any'}'")
     # loaded_db_entries should come from timetable_db.load_timetable
     loaded_db_entries = load_timetable(shift=current_shift, semester_label=label_to_load)
 
-    # Remove existing entries from the UI's list that match the current filter criteria
-    # before adding (potentially duplicate or updated) entries from the DB.
     temp_entries = [
         e for e in timetable_entries
         if not (
