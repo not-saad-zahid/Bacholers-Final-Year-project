@@ -265,5 +265,19 @@ def load_timetable_for_ga(shift): # Only takes shift as primary criteria
     print(f"Loaded {len(results)} entries for GA for shift: {shift}")
     return results
 
+def delete_timetable_entry_from_db(entry_id):
+    """
+    Delete a timetable entry from the database by its ID.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM timetable WHERE id = ?", (entry_id,))
+        conn.commit()
+        return cur.rowcount > 0
+    except sqlite3.Error as e:
+        messagebox.showerror("Database Error", f"Failed to delete entry from database: {e}")
+        return False
+
 def close_db():
     conn.close()

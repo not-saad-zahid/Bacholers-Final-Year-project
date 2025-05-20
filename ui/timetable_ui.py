@@ -83,8 +83,8 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     tk.Label(left, text="Semester/Label:", bg="white").grid(row=2, column=0, pady=5, sticky="w")
     tt_semester_entry = ttk.Entry(left, font=normal_font, width=12)
     tt_semester_entry.grid(row=2, column=1, sticky="ew", pady=5, padx=(0,10))
-    tt_semester_entry.bind("<FocusOut>", lambda event: clear_entries_on_change(event, "semester"))
-    tt_semester_entry.bind("<Return>", lambda event: clear_entries_on_change(event, "semester"))
+    # tt_semester_entry.bind("<FocusOut>", lambda event: clear_entries_on_change(event, "semester"))
+    # tt_semester_entry.bind("<Return>", lambda event: clear_entries_on_change(event, "semester"))
 
     tk.Label(left, text="Shift:", bg="white").grid(row=2, column=2, pady=5, sticky="w")
     shift_cb = ttk.Combobox(left, values=["Morning", "Evening"], width=10, state="readonly")
@@ -247,7 +247,7 @@ def save_tt_entry():
         action = "added"
 
     # Clear form and reset editing state
-    clear_tt_form()
+    # clear_tt_form()
     
     # Update display
     update_tt_treeview()
@@ -391,7 +391,18 @@ def delete_tt_entry():
     try:
         index = int(selected_iid)
         if 0 <= index < len(timetable_entries):
-            if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this entry?"):
+            if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this entry? This will also remove it from the database."):
+                entry = timetable_entries[index]
+                
+                # Delete from database if entry has an ID
+                if 'entry_id' in entry:
+                    from db.timetable_db import delete_timetable_entry_from_db
+                    if delete_timetable_entry_from_db(entry['entry_id']):
+                        print(f"Entry {entry['entry_id']} deleted from database")
+                    else:
+                        print(f"Warning: Could not delete entry {entry['entry_id']} from database")
+                
+                # Remove from local list
                 timetable_entries.pop(index)
                 if editing_index is not None:
                     if editing_index == index:
