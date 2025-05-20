@@ -67,51 +67,6 @@ def init_timetable_db():
         )
     ''')
 
-    # Attempt to ALTER existing tables if they exist.
-    # SQLite has limitations with ALTER TABLE for changing column types directly if constraints exist or data types are very different.
-    # Often, for major type changes, a more robust approach is to:
-    # 1. Rename the old table.
-    # 2. Create the new table with the correct schema.
-    # 3. Copy data from the old table to the new, transforming as needed.
-    # 4. Drop the old table.
-    # For INTEGER to TEXT, SQLite is often flexible, but this is a simplified attempt.
-    
-    existing_tables = [row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
-
-    if 'timetable' in existing_tables:
-        try:
-            # This won't change type if column already text. If it's INT, SQLite stores text fine in INT cols usually.
-            # True type change is harder. This just ensures the schema matches if it was recreated.
-            print("Checking 'timetable' schema. If it was INTEGER, new entries will be TEXT.")
-        except sqlite3.OperationalError:
-             pass # Ignore if fails, implies more complex migration needed if types were strictly enforced and different.
-
-    if 'class_sections' in existing_tables:
-        try:
-            print("Checking 'class_sections' schema. If it was INTEGER, new entries will be TEXT.")
-        except sqlite3.OperationalError:
-            pass
-            
-    # Add new columns to courses if they don't exist (from previous step, ensure it's idempotent)
-    if 'courses' in existing_tables:
-        course_cols = [col[1] for col in c.execute("PRAGMA table_info(courses)").fetchall()]
-        if 'code' not in course_cols:
-            try:
-                c.execute("ALTER TABLE courses ADD COLUMN code TEXT NOT NULL DEFAULT 'N/A'")
-                print("Added 'code' column to courses table.")
-            except sqlite3.OperationalError as e:
-                if "duplicate column name" not in str(e): raise
-        if 'indicators' not in course_cols:
-            try:
-                c.execute("ALTER TABLE courses ADD COLUMN indicators TEXT")
-                print("Added 'indicators' column to courses table.")
-            except sqlite3.OperationalError as e:
-                if "duplicate column name" not in str(e): raise
-    
-    conn.commit()
-    return conn
-
-
 def fetch_id_from_name(table, name, **kwargs):
     cur = conn.cursor()
     try:

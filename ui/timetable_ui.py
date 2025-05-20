@@ -57,7 +57,9 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
 
     root = master
 
-    conn = init_timetable_db() # This initializes the connection in timetable_db and returns it.
+    init_timetable_db()                     # sets up tables on module‑level conn
+    from db.timetable_db import conn as db_conn
+    conn = db_conn
 
     TT_header_frame = tk.Frame(root, bg="#0d6efd", height=60)
     header_label = tk.Label(TT_header_frame, text="Timetable Data Entry", bg="#0d6efd", fg="white", font=title_font)
@@ -649,7 +651,9 @@ def run_timetable_generation(shift, lectures_per_course, lecture_duration, start
         )
 
         optimized_schedule = ga.generate_optimized_timetable()
-
+        print(f"Debug: GA returned {len(optimized_schedule or {})} lecture entries")
+        population = ga.generate_initial_population()
+        optimized_schedule = population[0]
         if optimized_schedule is None:
             messagebox.showwarning("Generation Failed", "The genetic algorithm could not generate a valid timetable with the given constraints and data.")
             return

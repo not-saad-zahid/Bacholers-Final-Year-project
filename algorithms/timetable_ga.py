@@ -74,8 +74,10 @@ class TimetableGeneticAlgorithm:
 
         timetable = {}
         for entry in self.entries:
+            # pull course_code into a local variable so `code` is defined
             course = entry['course_name']
             section = entry['class_section']
+            code    = entry['course_code']
             num_days = self.LECTURES_PER_COURSE
             max_attempts = len(self.ordered_days) * 2
             block_days = None
@@ -93,13 +95,29 @@ class TimetableGeneticAlgorithm:
                     time_range = random.choice(list(common))
                     break
 
+            # fallback: if no consecutive block found, just pick num_days random slots
             if not block_days:
-                print(f"Warning: Could not assign block for {course} ({section}).")
-                return None
+                print(f"Warning: Could not find consecutive block for {course} ({section}); falling back to random slots.")
+                # shuffle all slots and take the first num_days
+                all_slots = random.sample(self.unique_time_slots, k=min(len(self.unique_time_slots), num_days))
+                for idx, slot in enumerate(all_slots):
+                    key = (course, section, idx, code)
+                    timetable[key] = {
+                        'course_name': course,
+                        'course_code': code,
+                        'course_indicators': entry.get('course_indicators',''),
+                        'time_slot': slot,
+                        'room': entry['room'],
+                        'teacher': entry['teacher'],
+                        'semester': entry['semester'],
+                        'class_section': section
+                    }
+                # skip the block logic below for this entry
+                continue
 
             # assign lectures
             for idx, day in enumerate(block_days):
-                lecture_key = (course, section, idx)
+                lecture_key = (course, section, idx, entry['course_code'])
                 slot = f"{day} {time_range}"
                 timetable[lecture_key] = {
                     'course_name': course,
@@ -185,7 +203,8 @@ class TimetableGeneticAlgorithm:
         course_days = {}
         course_times = {}
         for key, det in timetable.items():
-            course, section, _ = key
+            # always grab the course and section from the first two slots of the key
+            course, section = key[0], key[1]
             ts = det['time_slot']
             parts = ts.split(' ',1)
             if len(parts) < 2: continue
@@ -220,8 +239,10 @@ class TimetableGeneticAlgorithm:
         # Group by course-section
         blocks = {}
         for key in timetable:
-            course, section, idx = key
-            blocks.setdefault((course, section), []).append(key)
+            # key can be (course, section, idx, code)
+            course, section, idx = key[0], key[1], key[2]
+            code = key[3] if len(key) > 3 else None
+            blocks.setdefault((course, section, code), []).append(key)
         # mutate whole blocks
         for cs, keys in blocks.items():
             if len(keys) != self.LECTURES_PER_COURSE:
