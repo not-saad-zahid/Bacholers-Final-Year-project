@@ -520,29 +520,24 @@ def generate_timetable_dialog():
     lectures_cb = ttk.Combobox(main_frame, values=["1", "2", "3", "4"], textvariable=lectures_var, width=18, state="readonly")
     lectures_cb.grid(row=9, column=1, sticky="w", pady=5)
 
-    tk.Label(main_frame, text="Max Lectures per Day (per course):").grid(row=10, column=0, sticky="w", pady=5)
-    max_lectures_var = tk.StringVar(value="1")
-    max_lectures_cb = ttk.Combobox(main_frame, values=["1", "2", "3"], textvariable=max_lectures_var, width=18, state="readonly")
-    max_lectures_cb.grid(row=10, column=1, sticky="w", pady=5)
-
-    tk.Label(main_frame, text="Lecture Duration (minutes):").grid(row=11, column=0, sticky="w", pady=5)
+    tk.Label(main_frame, text="Lecture Duration (minutes):").grid(row=10, column=0, sticky="w", pady=5)
     duration_var = tk.StringVar(value="60")
     duration_cb = ttk.Combobox(main_frame, values=["45", "50", "55", "60", "90", "120"], textvariable=duration_var, width=18, state="readonly")
-    duration_cb.grid(row=11, column=1, sticky="w", pady=5)
+    duration_cb.grid(row=10, column=1, sticky="w", pady=5)
 
-    tk.Label(main_frame, text="Daily Start Time:").grid(row=12, column=0, sticky="w", pady=5)
+    tk.Label(main_frame, text="Daily Start Time:").grid(row=11, column=0, sticky="w", pady=5)
     start_time_dialog_var = tk.StringVar(value="01:00 PM" if shift_dialog_var.get() == "Evening" else "08:00 AM")
     start_time_entry = ttk.Entry(main_frame, textvariable=start_time_dialog_var, width=20)
-    start_time_entry.grid(row=12, column=1, sticky="w", pady=5)
+    start_time_entry.grid(row=11, column=1, sticky="w", pady=5)
 
-    tk.Label(main_frame, text="Daily End Time:").grid(row=13, column=0, sticky="w", pady=5)
+    tk.Label(main_frame, text="Daily End Time:").grid(row=12, column=0, sticky="w", pady=5)
     end_time_dialog_var = tk.StringVar(value="06:00 PM" if shift_dialog_var.get() == "Evening" else "01:00 PM")
     end_time_entry = ttk.Entry(main_frame, textvariable=end_time_dialog_var, width=20)
-    end_time_entry.grid(row=13, column=1, sticky="w", pady=5)
+    end_time_entry.grid(row=12, column=1, sticky="w", pady=5)
 
-    tk.Label(main_frame, text="Days:").grid(row=14, column=0, sticky="w", pady=5)
+    tk.Label(main_frame, text="Days:").grid(row=13, column=0, sticky="w", pady=5)
     days_frame = tk.Frame(main_frame)
-    days_frame.grid(row=14, column=1, sticky="w")
+    days_frame.grid(row=13, column=1, sticky="w")
     day_vars = {}
     days_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
     for i, day_text in enumerate(days_options):
@@ -552,7 +547,7 @@ def generate_timetable_dialog():
         day_vars[day_text] = var
 
     dialog_btn_frame = tk.Frame(main_frame)
-    dialog_btn_frame.grid(row=15, column=0, columnspan=2, pady=20)
+    dialog_btn_frame.grid(row=14, column=0, columnspan=2, pady=20)
 
     def validate_and_run_generation():
         try:
@@ -565,12 +560,11 @@ def generate_timetable_dialog():
 
             gen_shift = shift_dialog_var.get()
             lectures_p_course = int(lectures_var.get())
-            max_lectures_p_day = int(max_lectures_var.get())
             lecture_dur = int(duration_var.get())
             start_t_str = start_time_dialog_var.get()
             end_t_str = end_time_dialog_var.get()
 
-            selected_days = [day for day, var_day in day_vars.items() if var_day.get()] # Renamed var to var_day
+            selected_days = [day for day, var in day_vars.items() if var.get()]
             if not selected_days:
                 messagebox.showwarning("No Days Selected", "Please select at least one day for the timetable.")
                 return
@@ -583,7 +577,6 @@ def generate_timetable_dialog():
             run_timetable_generation(
                 shift=gen_shift,
                 lectures_per_course=lectures_p_course,
-                max_lectures_per_day=max_lectures_p_day,
                 lecture_duration=lecture_dur,
                 start_time=start_t_str,
                 end_time=end_t_str,
@@ -602,8 +595,7 @@ def generate_timetable_dialog():
     tk.Button(dialog_btn_frame, text="Generate", command=validate_and_run_generation, width=10, bg="#007bff", fg="white").pack(side="right", padx=10)
 
 
-def run_timetable_generation(shift, lectures_per_course, max_lectures_per_day,
-                             lecture_duration, start_time, end_time, days, timetable_metadata):
+def run_timetable_generation(shift, lectures_per_course, lecture_duration, start_time, end_time, days, timetable_metadata):
     try:
         print(f"Loading GA data for Shift: {shift}")
         db_rows_for_ga = load_timetable_for_ga(shift=shift)
@@ -638,9 +630,8 @@ def run_timetable_generation(shift, lectures_per_course, max_lectures_per_day,
 
         ga = TimetableGeneticAlgorithm(
             entries=ga_entries,
-            time_slots_input = time_slots,
+            time_slots_input=time_slots,
             lectures_per_course=lectures_per_course,
-            max_lectures_per_day=max_lectures_per_day,
             population_size=100,
             max_generations=100,
             mutation_rate=0.15

@@ -13,20 +13,22 @@ class TimetableGeneticAlgorithm:
                  entries,                # List of dictionaries with course details
                  time_slots_input,       # List of pre-generated time slot strings from UI
                  lectures_per_course,
-                 max_lectures_per_day, # Max lectures for a single course on a single day
-                 # semester, shift, lecture_duration, start_time_str, end_time_str are no longer primary inputs for slot generation here
-                 # They are used by the UI to generate time_slots_input and to filter entries.
                  population_size=100,
                  max_generations=100,
                  mutation_rate=0.15):
 
         if not entries:
             raise ValueError("No timetable entries provided to GA.")
-        self.entries = entries # entries now contain: course_name, course_code, course_indicators, class_section, room, teacher, semester
+        self.entries = entries
 
         if not time_slots_input:
             raise ValueError("No time slots provided to GA.")
-        self.unique_time_slots = list(set(time_slots_input)) # Ensure unique and use directly
+        self.unique_time_slots = list(set(time_slots_input))
+
+        self.POPULATION_SIZE = population_size
+        self.MAX_GENERATIONS = max_generations
+        self.MUTATION_RATE = mutation_rate
+        self.LECTURES_PER_COURSE = lectures_per_course
 
         # Room capacities (example, can be made dynamic if needed)
         # This is not used in the current fitness function but kept for potential future use.
@@ -40,13 +42,6 @@ class TimetableGeneticAlgorithm:
         for entry in self.entries:
             entry['room'] = str(entry['room'])
 
-
-        self.POPULATION_SIZE = population_size
-        self.MAX_GENERATIONS = max_generations
-        self.MUTATION_RATE = mutation_rate
-        self.LECTURES_PER_COURSE = lectures_per_course
-        self.MAX_LECTURES_PER_DAY = max_lectures_per_day
-        
         # Extract unique values from entries (can be useful for some constraints or logging)
         self.unique_rooms = list(set(str(e['room']) for e in self.entries)) # Ensure rooms are strings
         self.unique_teachers = list(set(e['teacher'] for e in self.entries))
@@ -66,7 +61,7 @@ class TimetableGeneticAlgorithm:
         
         self.best_fitness_history = []
         print(f"GA initialized with {len(self.entries)} entry types, {len(self.unique_time_slots)} unique time slots.")
-        print(f"Lectures per course: {self.LECTURES_PER_COURSE}, Max per day: {self.MAX_LECTURES_PER_DAY}")
+        print(f"Lectures per course: {self.LECTURES_PER_COURSE}")
 
 
     # _generate_time_slots is no longer needed as time_slots_input is provided by UI
@@ -86,177 +81,138 @@ class TimetableGeneticAlgorithm:
         return population
 
     def _create_random_timetable(self):
-        timetable = {} # Stores {(course_name, class_section, instance_num): details_dict}
+        timetable = {}
         
-        # Track used (day, course_name, class_section) to limit lectures per day for a course
+        # Track used (day, course_name, class_section) to enforce 1 lecture per day
         lectures_on_day_for_course_section = {}
 
         for entry in self.entries:
-            # The 'entry' dict from self.entries contains all details for one type of class offering
-            # (e.g., one specific course for one teacher, one section, one room, one semester)
             course_n = entry['course_name']
             class_sec = entry['class_section']
             
             # Create LECTURES_PER_COURSE instances for this specific course offering
             for i in range(self.LECTURES_PER_COURSE):
-                lecture_key = (course_n, class_sec, i) # Unique key for this specific lecture instance
+                lecture_key = (course_n, class_sec, i)
                 
                 assigned_slot = False
                 attempts = 0
-                max_attempts = len(self.unique_time_slots) * 2 # Heuristic for attempts
+                max_attempts = len(self.unique_time_slots) * 2
 
                 while not assigned_slot and attempts < max_attempts:
                     attempts += 1
-                    # Try to pick a slot that respects MAX_LECTURES_PER_DAY for this course_n in this class_sec
                     chosen_slot = random.choice(self.unique_time_slots)
                     day_of_chosen_slot = chosen_slot.split()[0]
 
                     day_course_key = (day_of_chosen_slot, course_n, class_sec)
                     current_lectures_on_day = lectures_on_day_for_course_section.get(day_course_key, 0)
 
-                    if current_lectures_on_day < self.MAX_LECTURES_PER_DAY:
-                        # This slot is viable for this lecture instance regarding MAX_LECTURES_PER_DAY constraint
+                    if current_lectures_on_day == 0:  # Changed condition to strictly enforce 1 lecture per day
                         timetable[lecture_key] = {
-                            'course_name': course_n, # From outer loop entry
-                            'course_code': entry['course_code'],
-                            'course_indicators': entry.get('course_indicators', ''),
-                            'time_slot': chosen_slot,
-                            'room': str(entry['room']), # Ensure room is string
-                            'teacher': entry['teacher'],
-                            'semester': entry['semester'], # Semester of this specific course entry
-                            'class_section': class_sec # For easier access in fitness/display
-                        }
-                        lectures_on_day_for_course_section[day_course_key] = current_lectures_on_day + 1
-                        assigned_slot = True
-                    # If not assignable, loop will try another random slot
-                
-                if not assigned_slot:
-                    # Failed to assign this lecture instance after many attempts
-                    # This indicates very tight constraints or insufficient slots for LECTURES_PER_COURSE * num_entries
-                    # For now, we'll proceed, and fitness will heavily penalize it if it causes issues
-                    # or it might mean this timetable is invalid from the start.
-                    print(f"Warning: Could not assign lecture {lecture_key} satisfying MAX_LECTURES_PER_DAY. Constraints might be too tight.")
-                    # Fallback: assign to a random slot anyway, let fitness handle it.
-                    # Or, better, indicate this random timetable is invalid by returning None or raising error.
-                    # For robustness, let's try a simple assignment if MAX_LECTURES_PER_DAY fails.
-                    if lecture_key not in timetable: # If it truly wasn't set
-                         chosen_slot = random.choice(self.unique_time_slots)
-                         timetable[lecture_key] = {
                             'course_name': course_n,
                             'course_code': entry['course_code'],
                             'course_indicators': entry.get('course_indicators', ''),
-                            'time_slot': chosen_slot, # Random, may violate MAX_LECTURES_PER_DAY
+                            'time_slot': chosen_slot,
                             'room': str(entry['room']),
                             'teacher': entry['teacher'],
                             'semester': entry['semester'],
                             'class_section': class_sec
                         }
-                         day_of_chosen_slot = chosen_slot.split()[0]
-                         day_course_key = (day_of_chosen_slot, course_n, class_sec)
-                         lectures_on_day_for_course_section[day_course_key] = lectures_on_day_for_course_section.get(day_course_key, 0) + 1
+                        lectures_on_day_for_course_section[day_course_key] = 1  # Set to 1 (not incrementing)
+                        assigned_slot = True
+                
+                if not assigned_slot:
+                    print(f"Warning: Could not assign lecture {lecture_key} with 1-per-day constraint. May need more available days.")
+                    # Fallback: assign to a random slot if we must
+                    chosen_slot = random.choice(self.unique_time_slots)
+                    timetable[lecture_key] = {
+                        'course_name': course_n,
+                        'course_code': entry['course_code'],
+                        'course_indicators': entry.get('course_indicators', ''),
+                        'time_slot': chosen_slot,
+                        'room': str(entry['room']),
+                        'teacher': entry['teacher'],
+                        'semester': entry['semester'],
+                        'class_section': class_sec
+                    }
+                    day_of_chosen_slot = chosen_slot.split()[0]
+                    day_course_key = (day_of_chosen_slot, course_n, class_sec)
+                    lectures_on_day_for_course_section[day_course_key] = 1
         
-        # Verify if all required lectures were scheduled (basic check)
-        expected_num_lectures = len(self.entries) * self.LECTURES_PER_COURSE
-        if len(timetable) != expected_num_lectures:
-            print(f"Warning: Timetable created with {len(timetable)} lectures, expected {expected_num_lectures}. Some lectures might be missing due to slotting failures.")
-            # Depending on strictness, could return None here
-            
         return timetable
-
-
-    # _get_distributed_time_slot is an alternative strategy for slot picking,
-    # the current _create_random_timetable uses a simpler random choice with MAX_LECTURES_PER_DAY check.
-    # If you prefer the _get_distributed_time_slot logic, integrate it into _create_random_timetable.
-    # For now, it's commented out to avoid confusion with the current implementation.
-    """
-    def _get_distributed_time_slot(self, timetable, course, section):
-        # ... (original logic) ...
-        # This would need to be adapted to work with the lecture_on_day_for_course_section tracking
-        # or replace that part of the logic in _create_random_timetable.
-        pass
-    """
 
     def calculate_fitness(self, timetable):
         score = 0
-        room_usage = {}    # key: "timeslot_room", value: (course, class_sec)
-        teacher_usage = {} # key: "teacher_timeslot", value: (course, class_sec)
-        class_usage = {}   # key: "class_section_timeslot", value: (course, class_name) # class_name is class_sec
+        room_usage = {}
+        teacher_usage = {}
+        class_usage = {}
 
-        course_lectures_count = {} # key: (course_name, class_section), value: count
-        course_on_day_count = {} # key: (day, course_name, class_section), value: count
-        teacher_daily_load = {} # key: (teacher, day), value: count
-        section_daily_load = {} # key: (class_section, day), value: count
+        course_lectures_count = {}
+        course_on_day_count = {}
+        teacher_daily_load = {}
+        section_daily_load = {}
 
-        if timetable is None: # Handle cases where a valid timetable couldn't be formed
-            return float('inf') # Worst possible score
+        if timetable is None:
+            return float('inf')
 
         for lecture_key, details in timetable.items():
-            # lecture_key is (course_name, class_section, instance_num)
-            # details is {'course_name', 'course_code', ..., 'time_slot', 'room', 'teacher', 'semester', 'class_section'}
-            
             course_n = details['course_name']
-            class_sec = details['class_section'] # This is the specific section for this lecture
+            class_sec = details['class_section']
             ts = details['time_slot']
-            rm = str(details['room']) # Ensure room is string
+            rm = str(details['room'])
             tch = details['teacher']
             
             try:
                 day = ts.split()[0]
             except IndexError:
-                score += 1000 # Heavily penalize malformed timeslot
-                continue # Skip this invalid entry for further checks
+                score += 1000
+                continue
 
-            # 1. Room conflict: Same room, same time
+            # Room conflict check
             room_key = f"{ts}_{rm}"
             if room_key in room_usage:
-                score += 100  # Major penalty
+                score += 100
             room_usage[room_key] = (course_n, class_sec)
 
-            # 2. Teacher conflict: Same teacher, same time
+            # Teacher conflict check
             teacher_key = f"{tch}_{ts}"
             if teacher_key in teacher_usage:
-                score += 100  # Major penalty
+                score += 100
             teacher_usage[teacher_key] = (course_n, class_sec)
 
-            # 3. Class/Section conflict: Same class/section, same time
-            class_key = f"{class_sec}_{ts}" # Using class_section from details
+            # Class/Section conflict check
+            class_key = f"{class_sec}_{ts}"
             if class_key in class_usage:
-                score += 150 # Very severe penalty (class can't be in two places)
-            class_usage[class_key] = (course_n, class_sec) # Storing course_n for context
+                score += 150
+            class_usage[class_key] = (course_n, class_sec)
 
-            # --- Distribution and Load Constraints ---
-            # A. Track lectures per course offering (to ensure LECTURES_PER_COURSE are present)
+            # Track lectures per course offering
             course_offering_key = (course_n, class_sec)
             course_lectures_count[course_offering_key] = course_lectures_count.get(course_offering_key, 0) + 1
             
-            # B. Max lectures per day for a specific course in a specific class/section
+            # Strictly enforce 1 lecture per day per course-section
             day_course_section_key = (day, course_n, class_sec)
             course_on_day_count[day_course_section_key] = course_on_day_count.get(day_course_section_key, 0) + 1
-            if course_on_day_count[day_course_section_key] > self.MAX_LECTURES_PER_DAY:
-                score += 30 * (course_on_day_count[day_course_section_key] - self.MAX_LECTURES_PER_DAY) # Penalty for exceeding
+            if course_on_day_count[day_course_section_key] > 1:
+                score += 200  # Heavy penalty for multiple lectures of same course in a day
 
-            # C. Teacher daily load (e.g., max 3-4 lectures per day for a teacher)
+            # Teacher daily load check
             teacher_day_key = (tch, day)
             teacher_daily_load[teacher_day_key] = teacher_daily_load.get(teacher_day_key, 0) + 1
-            if teacher_daily_load[teacher_day_key] > 4: # Example: Max 4 lectures/day for a teacher
+            if teacher_daily_load[teacher_day_key] > 4:
                 score += 15 * (teacher_daily_load[teacher_day_key] - 4)
 
-            # D. Section daily load (e.g., max 4-5 lectures per day for a section)
+            # Section daily load check
             section_day_key = (class_sec, day)
             section_daily_load[section_day_key] = section_daily_load.get(section_day_key, 0) + 1
-            if section_daily_load[section_day_key] > 5: # Example: Max 5 lectures/day for a section
+            if section_daily_load[section_day_key] > 5:
                 score += 10 * (section_daily_load[section_day_key] - 5)
         
-        # After iterating through all lectures, apply penalties for overall course lecture counts
-        for entry in self.entries: # Check against the original list of required course offerings
+        # Check for required number of lectures
+        for entry in self.entries:
             course_offering_key_check = (entry['course_name'], entry['class_section'])
             actual_lectures = course_lectures_count.get(course_offering_key_check, 0)
             if actual_lectures != self.LECTURES_PER_COURSE:
-                score += 50 * abs(actual_lectures - self.LECTURES_PER_COURSE) # Penalty for wrong number of lectures
-
-        # Consider adding penalties for courses not spread across enough days (soft constraint)
-        # This requires more complex tracking (e.g., (course_n, class_sec) -> set of days)
-        # For now, focusing on hard constraints and basic distribution.
+                score += 50 * abs(actual_lectures - self.LECTURES_PER_COURSE)
 
         return score
 
@@ -312,27 +268,12 @@ class TimetableGeneticAlgorithm:
             print("Warning: Mutation received invalid timetable.")
             return {}
 
-        # Track used (day, course_name, class_section) to limit lectures per day for a course
-        # This needs to be rebuilt for the *current* state of the timetable being mutated.
-        lectures_on_day_for_course_section_mut = {}
-        for lec_key_mut, det_mut in timetable.items():
-            day_mut = det_mut['time_slot'].split()[0]
-            course_n_mut = det_mut['course_name']
-            class_sec_mut = det_mut['class_section']
-            day_course_key_mut = (day_mut, course_n_mut, class_sec_mut)
-            lectures_on_day_for_course_section_mut[day_course_key_mut] = \
-                lectures_on_day_for_course_section_mut.get(day_course_key_mut, 0) + 1
-
-
         for lecture_key_to_mutate in list(timetable.keys()): # (course_name, class_section, instance_num)
             if random.random() < self.MUTATION_RATE:
                 original_details = timetable[lecture_key_to_mutate]
                 original_slot = original_details['time_slot']
-                original_day = original_slot.split()[0]
-                course_n = original_details['course_name']
-                class_sec = original_details['class_section']
 
-                # Try to find a new slot, respecting MAX_LECTURES_PER_DAY
+                # Try to find a new slot
                 assigned_new_slot = False
                 attempts = 0
                 max_attempts = len(self.unique_time_slots) # Try each slot once on average
@@ -344,31 +285,13 @@ class TimetableGeneticAlgorithm:
                         if len(self.unique_time_slots) > 1: # Only if other slots exist
                             continue 
                     
-                    new_day = new_random_slot.split()[0]
-                    
-                    # Temporarily decrement count for original slot's day for this course/section
-                    original_day_course_key = (original_day, course_n, class_sec)
-                    lectures_on_day_for_course_section_mut[original_day_course_key] = \
-                        lectures_on_day_for_course_section_mut.get(original_day_course_key, 1) -1 # Min 0
-                    
-                    # Check if new slot is viable
-                    new_day_course_key = (new_day, course_n, class_sec)
-                    current_lectures_on_new_day = lectures_on_day_for_course_section_mut.get(new_day_course_key, 0)
-
-                    if current_lectures_on_new_day < self.MAX_LECTURES_PER_DAY:
-                        timetable[lecture_key_to_mutate]['time_slot'] = new_random_slot
-                        # Increment count for the new slot's day
-                        lectures_on_day_for_course_section_mut[new_day_course_key] = current_lectures_on_new_day + 1
-                        assigned_new_slot = True
-                        break # Exit attempt loop
-                    else:
-                        # New slot not viable, revert decrement for original slot's day (as it wasn't moved)
-                        lectures_on_day_for_course_section_mut[original_day_course_key] += 1 
+                    timetable[lecture_key_to_mutate]['time_slot'] = new_random_slot
+                    assigned_new_slot = True
+                    break # Exit attempt loop
                 
-                # If still not assigned a new slot (e.g. all other slots violate MAX_LECTURES_PER_DAY)
+                # If still not assigned a new slot (e.g. all other slots violate constraints)
                 # the original slot remains, or you could force a random change if strict mutation is desired
-                # Current logic: if no better slot found, it stays as is or might have its counts slightly off if not reverted perfectly.
-                # The fitness function will ultimately penalize if the state is bad.
+                # Current logic: if no better slot found, it stays as is.
         return timetable
 
 
