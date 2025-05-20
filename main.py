@@ -50,7 +50,7 @@ def main():
     # Initialize modules and hide them initially
     init_tt(root, title_font, header_font, normal_font, button_font, return_home)
     hide_tt()
-    init_dt(root, title_font, header_font, normal_font, button_font, return_home)
+    init_dt(root, return_home)
     hide_dt()
 
     # ---------------------- Home Page ----------------------
@@ -125,7 +125,7 @@ def main():
     # Timetable Card
     tt_card = tk.Frame(card_frame, bg="white", relief="solid", borderwidth=1)
     tt_card.pack(side="left", expand=True, fill="both", padx=15, pady=10)
-    tt_title = tk.Label(tt_card, text="Class Timetable Generator", font=header_font, bg="white")
+    tt_title = tk.Label(tt_card, text="Timetable Generator", font=header_font, bg="white")
     tt_title.pack(pady=5)
     tt_desc = tk.Label(
         tt_card,

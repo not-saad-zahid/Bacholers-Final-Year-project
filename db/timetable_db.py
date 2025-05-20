@@ -27,6 +27,25 @@ def init_timetable_db():
         )
     ''')
     
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS datesheet (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id INTEGER NOT NULL,
+            teacher_id INTEGER NOT NULL,
+            room_id INTEGER NOT NULL,
+            class_section_id INTEGER NOT NULL,
+            exam_date TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            shift TEXT NOT NULL,
+            semester INTEGER NOT NULL,
+            FOREIGN KEY (course_id) REFERENCES courses (id),
+            FOREIGN KEY (teacher_id) REFERENCES teachers (id),
+            FOREIGN KEY (room_id) REFERENCES rooms (id),
+            FOREIGN KEY (class_section_id) REFERENCES class_sections (id)
+        )
+    ''')
+        
     # Create the teachers table
     c.execute('''
         CREATE TABLE IF NOT EXISTS teachers (

@@ -46,29 +46,29 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     TT_frame.grid_rowconfigure(1, weight=3)
     TT_frame.grid_columnconfigure(0, weight=1)
 
-    # Left pane for inputs
+       # Left pane for inputs
     left = tk.Frame(TT_frame, bg="white", padx=20, pady=20)
     left.grid(row=0, column=0, sticky="nsew")
 
     # Right pane for display
     right = tk.Frame(TT_frame, bg="#f8f9fa", padx=20, pady=20)
     right.grid(row=1, column=0, sticky="nsew", columnspan=2)
-
+    
     # Input heading
     tk.Label(left, text="Enter Timetable Details", bg="white", fg="#212529", font=header_font).grid(row=0, column=0, columnspan=2, pady=10, sticky="w")
-    ttk.Separator(left, orient='horizontal').grid(row=1, column=0, columnspan=3, sticky='ew', pady=5)
+    # ttk.Separator(left, orient='horizontal').grid(row=1, column=0, columnspan=3, sticky='ew', pady=5)
 
     # Semester
-    tk.Label(left, text="Semester (1-8):", bg="white").grid(row=2, column=0, pady=5)
+    tk.Label(left, text="Semester (1-8):", bg="white", font=normal_font).grid(row=2, column=0, pady=5, sticky="w")
     semester_cb = ttk.Combobox(left, values=[str(i) for i in range(1, 9)])
     semester_cb.grid(row=2, column=1, sticky="ew", pady=5)
     semester_cb.set("1")
     semester_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)  # Bind event
 
-    # Shift
-    tk.Label(left, text="Shift:", bg="white").grid(row=2, column=3, pady=5)
+    # Shift (tabbed to the right)
+    tk.Label(left, text="Shift:", bg="white", font=normal_font).grid(row=2, column=2, padx=(30, 0), pady=5, sticky="w")
     shift_cb = ttk.Combobox(left, values=["Morning", "Evening"])
-    shift_cb.grid(row=2, column=4, sticky="ew", pady=5)
+    shift_cb.grid(row=2, column=3, sticky="ew", pady=5)
     shift_cb.set("Morning")
     shift_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)  # Bind event
 
@@ -78,28 +78,28 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     end_time_var = tk.StringVar(value="1:00 PM")  # Default value
     
     # Teacher Name
-    tk.Label(left, text="Teacher Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=0, pady=5)
+    tk.Label(left, text="Teacher Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=0, pady=5, sticky="w")
     tt_teacher_entry = ttk.Entry(left, font=normal_font)
     tt_teacher_entry.grid(row=3, column=1, sticky="ew", pady=5)
 
-    # Course
-    tk.Label(left, text="Course Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=3, pady=5)
+    # Course (tabbed to the right)
+    tk.Label(left, text="Course Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=2, padx=(30, 0), pady=5, sticky="w")
     tt_course_entry = ttk.Entry(left, font=normal_font)
-    tt_course_entry.grid(row=3, column=4, sticky="ew", pady=5)
+    tt_course_entry.grid(row=3, column=3, sticky="ew", pady=5)
 
     # Room
-    tk.Label(left, text="Room:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=5, pady=5)
+    tk.Label(left, text="Room:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=0, pady=5, sticky="w")
     tt_room_entry = ttk.Entry(left, font=normal_font)
-    tt_room_entry.grid(row=3, column=6, sticky="ew", pady=5)
+    tt_room_entry.grid(row=4, column=1, sticky="ew", pady=5)
 
-    # Class/Section
-    tk.Label(left, text="Class/Section:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=7, pady=5)
+    # Class/Section (tabbed to the right)
+    tk.Label(left, text="Class/Section:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=2, padx=(30, 0), pady=5, sticky="w")
     tt_class_entry = ttk.Entry(left, font=normal_font)
-    tt_class_entry.grid(row=3, column=8, sticky="ew", pady=5)
+    tt_class_entry.grid(row=4, column=3, sticky="ew", pady=5)
 
     # Save Entry button
     tk.Button(left, text="Save Entry", font=button_font, bg="#198754", fg="white",
-              command=save_tt_entry, padx=10, pady=5, borderwidth=0).grid(row=6, column=0, columnspan=2, pady=15)
+              command=save_tt_entry, padx=10, pady=5, borderwidth=0).grid(row=5, column=0, pady=5)
 
     # Right: Treeview
     tk.Label(right, text="Saved Timetable Entries", bg="#f8f9fa", fg="#212529", font=header_font).pack(anchor="w", pady=5)
@@ -136,16 +136,16 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
               command=delete_tt_entry, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
     tk.Button(btn_frame, text="Clear All", font=button_font, bg="#6c757d", fg="white",
               command=clear_all_tt_entries, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    tt_generate_button = tk.Button(btn_frame, text="Generate Timetable", font=button_font, bg="#0d6efd", fg="white",
+    tt_generate_button = tk.Button(btn_frame, text="Generate Time table", font=button_font, bg="#0d6efd", fg="white",
                                    command=generate_timetable, padx=10, pady=5, borderwidth=0)
     tt_generate_button.pack(side='right', padx=5)
 
     # DB buttons
     db_frame = tk.Frame(right, bg="#f8f9fa")
     db_frame.pack(fill='x', pady=10)
-    tk.Button(db_frame, text="Save to DB", font=button_font, bg="#198754", fg="white",
+    tk.Button(db_frame, text="Save Data", font=button_font, bg="#198754", fg="white",
               command=save_to_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    tk.Button(db_frame, text="Load from DB", font=button_font, bg="#0d6efd", fg="white",
+    tk.Button(db_frame, text="Load Data", font=button_font, bg="#0d6efd", fg="white",
               command=load_from_db_ui, padx=10, pady=5, borderwidth=0).pack(side='right', padx=5)
 
     update_tt_treeview()
@@ -688,8 +688,8 @@ def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_
         display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift)
 
     except Exception as ex:
-        messagebox.showerror("Error", f"Failed to generate timetable: {str(ex)}")
-        
+        messagebox.showerror("Error", f"Failed to generate timetable: {str(ex)}")        
+
                 
 def clear_entries_on_change(event):
     """
@@ -787,8 +787,7 @@ def display_timetable(optimized, time_slots, selected_days, lecture_duration, se
     tk.Label(header_frame, text=f"Semester {semester} - {shift} Shift", 
             font=("Helvetica", 14, "bold"), bg="#f0f0f0").pack(pady=10)
     
-    # Extract days and times from time_slots
-    # Use the order from selected_days, but only include days that are actually in time_slots
+    # Extract days and times from time_slots, preserving order from selected_days
     days_in_slots = [slot.split()[0] for slot in time_slots]
     days = [day for day in selected_days if day in days_in_slots]
     times = sorted({ " ".join(slot.split()[1:]) for slot in time_slots })
@@ -822,15 +821,22 @@ def display_timetable(optimized, time_slots, selected_days, lecture_duration, se
         if row_id is None or day not in columns:
             continue
         day_idx = columns.index(day)
+        if day_idx == 0:
+            continue  # Never write to the "Time" column!
         row_values = list(tree.item(row_id)["values"])
         existing = row_values[day_idx]
 
-        new_entry = f"{details.get('course', course)}\n{details.get('class', class_sec)}\nInstance: {instance}\n{details.get('teacher', '')}\nRoom: {details.get('room', '')}"
+        # Use the GA's output keys for display
+        new_entry = (
+            f"{details.get('course', course)}\n"
+            f"{details.get('class', class_sec)}\n"
+            f"{details.get('teacher', '')}\n"
+            f"Room: {details.get('room', '')}"
+        )
         print(f"Placing in cell [Day: {day}, Time: {time_part}]:\n{new_entry}\n")
 
-        # Append instead of overwrite
+        # Append instead of overwrite, avoid duplicates
         if existing and existing.strip():
-            # Only append if the new entry is not already present (avoid duplicates)
             if new_entry not in existing:
                 row_values[day_idx] = existing + "\n---\n" + new_entry
         else:
@@ -851,7 +857,7 @@ def display_timetable(optimized, time_slots, selected_days, lecture_duration, se
     tk.Button(btn_frame, text="Export to PDF", command=lambda: messagebox.showinfo("Export", 
                 "PDF export functionality could be implemented here"),
              bg="#0d6efd", fg="white", padx=20, pady=5).pack(side="right", padx=5)
-
+        
         
     
 def save_to_db_ui():

@@ -1,9 +1,9 @@
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, font as tkfont
 from tkcalendar import Calendar
 from datetime import datetime
-
 from algorithms.datesheet_ga import DatesheetGeneticAlgorithm
+from ui.timetable_ui import clear_entries_on_change
 from db.datesheet_db import init_datesheet_db, save_datesheet, load_datesheet
 
 # Global variables
@@ -31,12 +31,21 @@ dt_generate_button = None
 root = None
 
 
-def initialize(master, title_font, header_font, normal_font, button_font, return_home_func):
+def initialize(master, return_home_func):
     global DT_header_frame, DT_frame, dt_treeview
     global dt_start_date_entry, dt_end_date_entry, dt_start_time_entry, dt_end_time_entry, dt_room_entry
     global subject_entries, dt_generate_button, root
+    global title_font, header_font, normal_font, button_font, subtitle_font  # Fonts must be global if used elsewhere
 
     root = master
+
+    # Define fonts after root is created
+    title_font = tkfont.Font(family="Helvetica", size=18, weight="bold")
+    header_font = tkfont.Font(family="Helvetica", size=14, weight="bold")
+    normal_font = tkfont.Font(family="Helvetica", size=10, weight="bold")
+    button_font = tkfont.Font(family="Helvetica", size=11, weight="bold")
+    subtitle_font = tkfont.Font(family="Helvetica", size=12, slant="italic")
+
     # Initialize database
     init_datesheet_db()
 
@@ -56,17 +65,19 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     DT_frame.grid_columnconfigure(1, weight=3)
     DT_frame.grid_rowconfigure(0, weight=1)
 
+    global dt_left, dt_right
+
     # Left pane for inputs
     dt_left = tk.Frame(DT_frame, bg="white", padx=20, pady=20)
     dt_left.grid(row=0, column=0, sticky="nsew")
 
     # Right pane for display
     dt_right = tk.Frame(DT_frame, bg="#f8f9fa", padx=20, pady=20)
-    dt_right.grid(row=0, column=1, sticky="nse")
+    dt_right.grid(row=1, column=0, sticky="nsew", columnspan=2)
 
     # Helper to open calendar
     def open_calendar(entry_widget):
-        top = tk.Toplevel(dt_left)
+        top = tk.Toplevel(dt_right)
         cal = Calendar(top, date_pattern="yyyy-mm-dd")
         cal.pack(pady=10)
         def select_date():
@@ -76,49 +87,61 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
         tk.Button(top, text="Select", command=select_date).pack(pady=5)
 
     # Input fields
-    tk.Label(dt_left, text="Enter Datesheet Details", bg="white", fg="#212529", font=header_font).grid(row=0, column=0, columnspan=4, pady=10, sticky="w")
-    ttk.Separator(dt_left, orient='horizontal').grid(row=1, column=0, columnspan=4, sticky='ew', pady=5)
+    tk.Label(dt_left, text="Enter Datesheet Details", bg="white", fg="#212529", font=header_font).grid(row=0, column=0, columnspan=10, pady=10, sticky="w")
+
+    # Semester
+    tk.Label(dt_left, text="Semester (1-8):", bg="white", font=normal_font).grid(row=1, column=0, pady=5, sticky="w")
+    semester_cb = ttk.Combobox(dt_left, values=[str(i) for i in range(1, 9)])
+    semester_cb.grid(row=1, column=1, sticky="ew", pady=5)
+    semester_cb.set("1")
+    semester_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)
+
+    # Shift
+    tk.Label(dt_left, text="Shift:", bg="white", font=normal_font).grid(row=1, column=3, pady=5, sticky="w")
+    shift_cb = ttk.Combobox(dt_left, values=["Morning", "Evening"])
+    shift_cb.grid(row=1, column=4, pady=5, sticky="ew")
+    shift_cb.set("Morning")
+    shift_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)
 
     # Start Date
     tk.Label(dt_left, text="Start Date:", bg="white", fg="#495057", font=normal_font).grid(row=2, column=0, sticky="w", pady=5)
     dt_start_date_entry = ttk.Entry(dt_left, font=normal_font)
     dt_start_date_entry.grid(row=2, column=1, sticky="ew", pady=5)
-    tk.Button(dt_left, text="Select", command=lambda: open_calendar(dt_start_date_entry)).grid(row=2, column=2, padx=5)
+    tk.Button(
+        dt_left, text="Select Date", command=lambda: open_calendar(dt_start_date_entry),
+        bg="white", fg="#0d6efd", font=normal_font, padx=15, pady=5, borderwidth=0
+    ).grid(row=2, column=2, padx=5)
 
     # End Date
-    tk.Label(dt_left, text="End Date:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=0, sticky="w", pady=5)
+    tk.Label(dt_left, text="End Date:", bg="white", fg="#495057", font=normal_font).grid(row=2, column=3, columnspan=2, sticky="w", pady=5)
     dt_end_date_entry = ttk.Entry(dt_left, font=normal_font)
-    dt_end_date_entry.grid(row=3, column=1, sticky="ew", pady=5)
-    tk.Button(dt_left, text="Select", command=lambda: open_calendar(dt_end_date_entry)).grid(row=3, column=2, padx=5)
+    dt_end_date_entry.grid(row=2, column=4, sticky="ew", pady=5)
+    tk.Button(
+        dt_left, text="Select Date", command=lambda: open_calendar(dt_end_date_entry),
+        bg="white", fg="#0d6efd", font=normal_font, padx=15, pady=5, borderwidth=0
+    ).grid(row=2, column=5, padx=5)
 
     # Start Time
-    tk.Label(dt_left, text="Start Time:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=0, sticky="w", pady=5)
+    tk.Label(dt_left, text="Start Time:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=0, sticky="w", pady=5)
     dt_start_time_entry = ttk.Entry(dt_left, font=normal_font)
-    dt_start_time_entry.grid(row=4, column=1, sticky="ew", pady=5)
+    dt_start_time_entry.grid(row=3, column=1, sticky="ew", pady=5)
 
     # End Time
-    tk.Label(dt_left, text="End Time:", bg="white", fg="#495057", font=normal_font).grid(row=5, column=0, sticky="w", pady=5)
+    tk.Label(dt_left, text="End Time:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=3, sticky="w", pady=5)
     dt_end_time_entry = ttk.Entry(dt_left, font=normal_font)
-    dt_end_time_entry.grid(row=5, column=1, sticky="ew", pady=5)
-
-    # Subjects
-    tk.Label(dt_left, text="Subjects:", bg="white", fg="#495057", font=normal_font).grid(row=6, column=0, sticky="nw", pady=5)
-    dt_subjects_frame = tk.Frame(dt_left, bg="white")
-    dt_subjects_frame.grid(row=6, column=1, sticky="ew", pady=5)
-    subject_entries.clear()
-    for i in range(6):
-        ent = ttk.Entry(dt_subjects_frame, font=normal_font)
-        ent.grid(row=i, column=0, pady=2, sticky="ew")
-        subject_entries.append(ent)
+    dt_end_time_entry.grid(row=3, column=4, sticky="ew", pady=5)
 
     # Room
-    tk.Label(dt_left, text="Room:", bg="white", fg="#495057", font=normal_font).grid(row=7, column=0, sticky="w", pady=5)
-    dt_room_entry = ttk.Entry(dt_left, font=normal_font)
-    dt_room_entry.grid(row=7, column=1, sticky="ew", pady=5)
+    # tk.Label(dt_left, text="Room:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=0, sticky="w", pady=5)
+    # dt_room_entry = ttk.Entry(dt_left, font=normal_font)
+    # dt_room_entry.grid(row=4, column=1, sticky="ew", pady=5)
 
-    # Save Entry button
+    # Entry buttons
     tk.Button(dt_left, text="Save Entry", font=button_font, bg="#198754", fg="white",
-              command=save_dt_entry, padx=10, pady=5, borderwidth=0).grid(row=8, column=0, columnspan=2, pady=15)
+              command=save_dt_entry, padx=10, pady=5, borderwidth=0).grid(row=4, column=0, pady=10)
+    
+    tk.Button(dt_left, text="Load Semester Entries", font=button_font, bg="#198754", fg="white",
+              command=None, padx=10, pady=5, borderwidth=0).grid(row=4, column=1,columnspan=2, pady=10)
 
     # Right side: Treeview
     tk.Label(dt_right, text="Saved Datesheet Entries", bg="#f8f9fa", fg="#212529", font=header_font).pack(anchor="w", pady=5)
@@ -141,24 +164,142 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     # Action buttons
     btn_frame = tk.Frame(dt_right, bg="#f8f9fa")
     btn_frame.pack(fill='x', pady=10)
-    tk.Button(btn_frame, text="Delete", font=button_font, bg="#dc3545", fg="white",
+    tk.Button(btn_frame, text="Delete Selected", font=button_font, bg="#dc3545", fg="white",
               command=delete_dt_entry, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
     tk.Button(btn_frame, text="Clear All", font=button_font, bg="#6c757d", fg="white",
               command=clear_all_dt_entries, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    dt_generate_button = tk.Button(btn_frame, text="Generate", font=button_font, bg="#0d6efd", fg="white",
+    dt_generate_button = tk.Button(btn_frame, text="Generate Date sheet", font=button_font, bg="#0d6efd", fg="white",
                                    command=generate_datesheet, padx=10, pady=5, borderwidth=0)
     dt_generate_button.pack(side='right', padx=5)
 
     # DB buttons
     db_frame = tk.Frame(dt_right, bg="#f8f9fa")
     db_frame.pack(fill='x', pady=10)
-    tk.Button(db_frame, text="Save to DB", font=button_font, bg="#198754", fg="white",
+    tk.Button(db_frame, text="Save Data",bd=6, font=button_font, bg="#198754", fg="white",
               command=save_to_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    tk.Button(db_frame, text="Load from DB", font=button_font, bg="#0d6efd", fg="white",
+    tk.Button(db_frame, text="Load Data", bd=6,font=button_font, bg="#0d6efd", fg="white",
               command=load_from_db_ui, padx=10, pady=5, borderwidth=0).pack(side='right', padx=5)
 
     update_dt_treeview()
 
+
+# # Subjects
+# def show_subject_entries():
+#     """Open a window to allow the user to enter up to 8 subjects."""
+#     global subject_entries
+
+#     # Create a new window
+#     subject_window = tk.Toplevel(root)
+#     subject_window.title("Enter Subjects")
+#     subject_window.geometry("800x800")
+#     subject_window.resizable(False, False)
+
+#     # Add a label
+#     tk.Label(subject_window, text="Enter up to 8 Subjects", font=header_font).pack(pady=10)
+
+#     # Clear existing subject entries
+#     subject_entries.clear()
+
+#     # Create entry fields for subjects
+#     for i in range(8):
+#         tk.Label(subject_window, text=f"Subject {i + 1}:", font=normal_font).pack(anchor="w", padx=20, pady=5)
+#         entry = ttk.Entry(subject_window, font=normal_font)
+#         entry.pack(fill="x", padx=20, pady=5)
+#         subject_entries.append(entry)
+
+    # Add a save button
+    # def save_subjects():
+    #     subjects = [entry.get().strip() for entry in subject_entries if entry.get().strip()]
+    #     if not subjects:
+    #         messagebox.showerror("Error", "Please enter at least one subject.")
+    #         return
+    #     messagebox.showinfo("Success", f"Subjects saved: {', '.join(subjects)}")
+    #     subject_window.destroy()
+
+    # tk.Button(subject_window, text="Save Subjects", font=button_font, bg="#198754", fg="white",
+    #           command=save_subjects, padx=10, pady=5).pack(pady=20)
+
+# Add this global variable at the top with other globals
+saved_subjects = []
+
+# Update the show_subject_entries function
+def show_subject_entries():
+    """Open a window to allow the user to enter up to 8 subjects."""
+    global subject_entries, saved_subjects
+
+    # Create a new window
+    subject_window = tk.Toplevel(root)
+    subject_window.title("Enter Subjects")
+    subject_window.geometry("800x800")
+    subject_window.resizable(False, False)
+
+    # Add a label
+    tk.Label(subject_window, text="Enter up to 8 Subjects", font=header_font).pack(pady=10)
+
+    # Clear existing subject entries (widgets)
+    subject_entries.clear()
+    saved_subjects.clear()  # Clear previous saved subjects
+
+    # Create entry fields for subjects
+    for i in range(8):
+        tk.Label(subject_window, text=f"Subject {i + 1}:", font=normal_font).pack(anchor="w", padx=20, pady=5)
+        entry = ttk.Entry(subject_window, font=normal_font)
+        entry.pack(fill="x", padx=20, pady=5)
+        subject_entries.append(entry)
+
+    # Add a save button
+    def save_subjects():
+        global saved_subjects
+        # Capture subjects from entries before destroying the window
+        saved_subjects = [entry.get().strip() for entry in subject_entries if entry.get().strip()]
+        if not saved_subjects:
+            messagebox.showerror("Error", "Please enter at least one subject.")
+            return
+        messagebox.showinfo("Success", f"Subjects saved: {', '.join(saved_subjects)}")
+        subject_window.destroy()
+
+    tk.Button(subject_window, text="Save Subjects", font=button_font, bg="#198754", fg="white",
+              command=save_subjects, padx=10, pady=5).pack(pady=20)
+
+# Update the save_dt_entry function to use saved_subjects
+# def save_dt_entry():
+#     """Save a new entry or update an existing one"""
+#     global editing_index, saved_subjects
+#     sd = dt_start_date_entry.get().strip()
+#     ed = dt_end_date_entry.get().strip()
+#     st = dt_start_time_entry.get().strip()
+#     et = dt_end_time_entry.get().strip()
+#     room = dt_room_entry.get().strip()
+#     # Use saved_subjects instead of subject_entries
+#     subs = saved_subjects  # Directly use the saved list
+#     # Validate
+#     if not all([sd, ed, st, et, room]) or not subs:
+#         messagebox.showerror("Error", "All fields required, at least one subject.")
+#         return
+#     # Rest of the function remains the same...
+#     try:
+#         datetime.strptime(sd, '%Y-%m-%d')
+#         datetime.strptime(ed, '%Y-%m-%d')
+#         datetime.strptime(st, '%H:%M')
+#         datetime.strptime(et, '%H:%M')
+#     except ValueError:
+#         messagebox.showerror("Error", "Invalid date/time format.")
+#         return
+#     entry = {
+#         "start_date": sd,
+#         "end_date": ed,
+#         "start_time": st,
+#         "end_time": et,
+#         "subjects": subs,  # Use the saved_subjects list
+#         "room": room
+#     }
+#     if editing_index is not None:
+#         datesheet_entries[editing_index] = entry
+#         editing_index = None
+#     else:
+#         datesheet_entries.append(entry)
+#     # clear_dt_form()
+#     update_dt_treeview()
 
 def save_dt_entry():
     """Save a new entry or update an existing one"""
@@ -190,7 +331,7 @@ def save_dt_entry():
         editing_index = None
     else:
         datesheet_entries.append(entry)
-    clear_dt_form()
+
     update_dt_treeview()
 
 
