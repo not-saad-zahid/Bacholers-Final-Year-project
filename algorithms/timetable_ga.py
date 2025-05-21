@@ -162,99 +162,72 @@ class TimetableGeneticAlgorithm:
         return score
 
     def _create_random_timetable(self):
-        """Create a timetable with only one course per time slot"""
+        """Assign earliest time slots to courses with highest lectures-per-course."""
         timetable = {}
-        time_slot_usage = {}  # Track which time slots are already used
+        time_slot_usage = set()  # Track used time slots (day + time)
         course_assignments = {}
 
-        # Shuffle entries to randomize assignment order
-        entries = self.entries.copy()
-        random.shuffle(entries)
-
-        for entry in entries:
+        # Prepare a list of (course, section, code, required_lectures) and sort descending
+        course_info = []
+        for entry in self.entries:
             course = entry['course_name']
             section = entry['class_section']
             code = entry['course_code']
-            course_key = (course, section, code)
+            required_lectures = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
+            course_info.append((course, section, code, required_lectures, entry))
+        # Sort by required_lectures descending
+        course_info.sort(key=lambda x: -x[3])
 
-            if course_key not in course_assignments:
-                required_lectures = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
-                
-                # Try to find consecutive days with available time slots
-                possible_days = []
-                for i in range(len(self.ordered_days) - required_lectures + 1):
-                    consecutive_days = self.ordered_days[i:i + required_lectures]
-                    possible_days.append(consecutive_days)
-                random.shuffle(possible_days)
+        # Prepare ordered list of all (day, time) slots
+        days = self.ordered_days
+        # Get all unique times (sorted)
+        all_times = sorted({ts.split(' ', 1)[1] for ts in self.unique_time_slots})
+        all_slots = []
+        for time in all_times:
+            for day in days:
+                if f"{day} {time}" in self.unique_time_slots:
+                    all_slots.append((day, time))
 
-                assigned = False
-                for days in possible_days:
-                    # Get available time slots common to all required days
-                    common_times = set(ts.split(' ', 1)[1] for ts in self.time_slots_by_day[days[0]])
-                    for day in days[1:]:
-                        common_times &= set(ts.split(' ', 1)[1] for ts in self.time_slots_by_day[day])
-                    
-                    # Try each possible time slot
-                    for time_slot in sorted(list(common_times)):
-                        slot_works = True
-                        
-                        # Check if any of the required time slots are already used
-                        for day in days:
-                            full_slot = f"{day} {time_slot}"
-                            if full_slot in time_slot_usage:
-                                slot_works = False
+        slot_index = 0  # Index in all_slots
+
+        for course, section, code, required_lectures, entry in course_info:
+            assigned_slots = []
+            # Try to assign required_lectures slots, preferring earliest available
+            for _ in range(required_lectures):
+                while slot_index < len(all_slots):
+                    day, time = all_slots[slot_index]
+                    slot_key = f"{day} {time}"
+                    slot_index += 1
+                    if slot_key not in time_slot_usage:
+                        assigned_slots.append((day, time))
+                        time_slot_usage.add(slot_key)
+                        break
+            # If not enough slots found, fallback: assign any available slot
+            if len(assigned_slots) < required_lectures:
+                for day in days:
+                    for time in all_times:
+                        slot_key = f"{day} {time}"
+                        if slot_key not in time_slot_usage:
+                            assigned_slots.append((day, time))
+                            time_slot_usage.add(slot_key)
+                            if len(assigned_slots) == required_lectures:
                                 break
-                        
-                        if slot_works:
-                            # Assign this time slot to all required lectures
-                            course_assignments[course_key] = {
-                                'time': time_slot,
-                                'days': days,
-                                'required': required_lectures
-                            }
-                            # Mark time slots as used
-                            for day in days:
-                                time_slot_usage[f"{day} {time_slot}"] = course_key
-                            assigned = True
-                            break
-
-                    if assigned:
+                    if len(assigned_slots) == required_lectures:
                         break
 
-                if not assigned:
-                    # Fallback: assign to any available slot, even if it causes a conflict
-                    fallback_days = self.ordered_days[:required_lectures]
-                    fallback_times = []
-                    for day in fallback_days:
-                        # Pick the first available time slot for the day
-                        time_list = [ts.split(' ', 1)[1] for ts in self.time_slots_by_day[day]]
-                        fallback_times.append(time_list[0] if time_list else "08:00 AM-09:00 AM")
-                    course_assignments[course_key] = {
-                        'time': fallback_times[0],
-                        'days': fallback_days,
-                        'required': required_lectures
-                    }
-                    # Mark time slots as used (optional, since this is fallback)
-                    for day in fallback_days:
-                        time_slot_usage[f"{day} {fallback_times[0]}"] = course_key
-
-                # Create timetable entries
-                assignment = course_assignments[course_key]
-                for idx, day in enumerate(assignment['days']):
-                    if idx >= assignment['required']:
-                        break
-
-                    key = (course, section, idx, code)
-                    timetable[key] = {
-                        'course_name': course,
-                        'course_code': code,
-                        'course_indicators': entry.get('course_indicators', ''),
-                        'time_slot': f"{day} {assignment['time']}",
-                        'room': entry['room'],
-                        'teacher': entry['teacher'],
-                        'semester': entry['semester'],
-                        'class_section': section
-                    }
+            # Create timetable entries
+            for idx, (day, time) in enumerate(assigned_slots):
+                key = (course, section, idx, code)
+                timetable[key] = {
+                    'course_name': course,
+                    'course_code': code,
+                    'course_indicators': entry.get('course_indicators', ''),
+                    'time_slot': f"{day} {time}",
+                    'room': entry['room'],
+                    'teacher': entry['teacher'],
+                    'semester': entry['semester'],
+                    'class_section': section
+                }
 
         return timetable
 
