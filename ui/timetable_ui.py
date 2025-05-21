@@ -742,14 +742,17 @@ def run_timetable_generation(shift, lectures_per_course, lecture_duration, start
             mutation_rate=0.15
         )
 
-        optimized_schedule = ga.generate_optimized_timetable()
-        print(f"Debug: GA returned {len(optimized_schedule or {})} lecture entries")
-        population = ga.generate_initial_population()
-        optimized_schedule = population[0]
-        if optimized_schedule is None:
+        optimized_schedule, best_fitness = ga.evolve() # Corrected line
+
+        print(f"Debug: GA returned optimized schedule with fitness: {best_fitness}")
+        print(f"Debug: Optimized schedule contains {len(optimized_schedule or {})} lecture entries")
+
+
+        if optimized_schedule is None or not optimized_schedule: # Check if the schedule is empty or None
             messagebox.showwarning("Generation Failed", "The genetic algorithm could not generate a valid timetable with the given constraints and data.")
             return
 
+        # The rest of your function using 'optimized_schedule'
         display_title = f"{timetable_metadata['timetable_title']} - {shift} Shift"
         display_timetable(optimized_schedule, time_slots, days, timetable_metadata, display_title)
 
