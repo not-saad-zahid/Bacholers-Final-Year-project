@@ -524,7 +524,6 @@ def generate_timetable_dialog():
     dialog.title("Configure Timetable Generation")
     dialog.geometry("800x700")
     dialog.resizable(False, False)
-    dialog.grab_set()
 
     dialog.update_idletasks()
     x = (root.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
@@ -676,8 +675,6 @@ def generate_timetable_dialog():
             for item in exceptions_tree.get_children():
                 values = exceptions_tree.item(item)["values"]
                 exceptions[values[0]] = int(values[2])  # Map course code to frequency
-
-            dialog.destroy()
 
             run_timetable_generation(
                 shift=gen_shift,
