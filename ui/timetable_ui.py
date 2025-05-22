@@ -177,25 +177,54 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     update_tt_treeview()
 
 def clear_all_tt_entries():
-    global timetable_entries, editing_index
+    global timetable_entries, editing_index, checked_items
     if not timetable_entries:
         messagebox.showinfo("Info", "No entries to clear")
         return
     if messagebox.askyesno("Confirm", "Are you sure you want to clear all current timetable entries? This does not affect the database until you save."):
         timetable_entries.clear()
         editing_index = None
+        checked_items.clear()  # Clear checkbox states
         clear_tt_form()
         update_tt_treeview()
         messagebox.showinfo("Cleared", "All current entries have been cleared.")
 
 def edit_selected_entry():
+    global editing_index
+    
+    # Get selected items from checkbox
     selected = [idx for idx, checked in checked_items.items() if checked]
     if not selected:
-        messagebox.showwarning("No Selection", "Please select an entry to edit.")
+        messagebox.showwarning("No Selection", "Please select an entry to edit using the checkbox.")
         return
-    idx = selected[0]
-    if 0 <= idx < len(timetable_entries):
-        entry_to_edit = timetable_entries[idx]
+    
+    if len(selected) > 1:
+        messagebox.showwarning("Multiple Selection", "Please select only one entry to edit.")
+        return
+    
+    display_idx = selected[0]
+    
+    # Convert display index to actual timetable_entries index
+    current_semester_label = tt_semester_entry.get().strip()
+    current_shift = shift_cb.get().strip()
+    
+    if not current_shift:
+        messagebox.showwarning("Missing Context", "Please select a shift first.")
+        return
+    
+    # Get filtered entries (same logic as update_tt_treeview)
+    display_entries = []
+    actual_indices = []
+    for i, entry in enumerate(timetable_entries):
+        if (entry.get('shift') == current_shift and 
+            (not current_semester_label or entry.get('semester') == current_semester_label)):
+            display_entries.append(entry)
+            actual_indices.append(i)
+    
+    if 0 <= display_idx < len(display_entries):
+        actual_idx = actual_indices[display_idx]
+        entry_to_edit = timetable_entries[actual_idx]
+        
         clear_tt_form()
         tt_semester_entry.insert(0, entry_to_edit.get('semester', ''))
         shift_cb.set(entry_to_edit.get('shift', 'Morning'))
@@ -205,8 +234,13 @@ def edit_selected_entry():
         tt_course_code_entry.insert(0, entry_to_edit.get('course_code', ''))
         tt_indicators_entry.insert(0, entry_to_edit.get('course_indicators', ''))
         tt_room_entry.insert(0, str(entry_to_edit.get('room_name', '')))
-        global editing_index
-        editing_index = idx
+        
+        # Set editing_index to the actual index
+        editing_index = actual_idx
+        
+        # Clear checkbox selection after editing
+        checked_items.clear()
+        update_tt_treeview()
     else:
         messagebox.showerror("Error", "Invalid selection.")
 
@@ -230,17 +264,18 @@ def save_tt_entry():
 
     if not teacher_name.replace(" ", "").isalpha():
         messagebox.showwarning("Invalid Teacher Name", "Teacher name should primarily contain letters.")
+        return False
     if not course_code.isalnum() and '-' not in course_code:
         messagebox.showwarning("Invalid Course Code", "Course code should be alphanumeric (e.g., CS101, CC-214).")
-        return
+        return False
     try:
         int(room_name)
     except ValueError:
         messagebox.showwarning("Invalid Room", "Room should be a number (e.g., 71).")
-        return
+        return False
     if not class_section_name.replace(" ", "").isalnum():
          messagebox.showwarning("Invalid Class/Section", "Class/Section must be alphanumeric (e.g., BSCS G1, A).")
-         return
+         return False
 
     entry_data = {
         "teacher_name": teacher_name,
@@ -261,13 +296,15 @@ def save_tt_entry():
         # Update existing entry
         timetable_entries[editing_index] = entry_data
         action = "updated"
+        editing_index = None  # Reset editing index
     else:
         # Add new entry
         timetable_entries.append(entry_data)
         action = "added"
 
-    # Clear form and reset editing state
-    # clear_tt_form()
+    # Clear form and reset states
+    clear_tt_form()
+    checked_items.clear()  # Clear checkbox selections
     
     # Update display
     update_tt_treeview()
@@ -367,23 +404,43 @@ def clear_tt_form():
     editing_index = None
 
 def on_treeview_click(event):
+    global checked_items
+    
     region = tt_treeview.identify("region", event.x, event.y)
     if region == "cell":
         row_id = tt_treeview.identify_row(event.y)
         col = tt_treeview.identify_column(event.x)
-        if col == "#1":  # "Select" column
-            idx = int(row_id)
-            checked_items[idx] = not checked_items.get(idx, False)
-            update_tt_treeview()
+        
+        if col == "#1" and row_id:  # "Select" column
+            try:
+                # Convert row_id to integer (display index)
+                display_idx = int(row_id)
+                
+                # Toggle checkbox state
+                checked_items[display_idx] = not checked_items.get(display_idx, False)
+                
+                # If we're checking this item, uncheck all others (single selection)
+                if checked_items[display_idx]:
+                    for key in list(checked_items.keys()):
+                        if key != display_idx:
+                            checked_items[key] = False
+                
+                update_tt_treeview()
+                
+            except (ValueError, IndexError):
+                print(f"Error handling click on row_id: {row_id}")
 
 def update_tt_treeview():
     global timetable_entries, tt_treeview, checked_items
+    
+    # Clear existing items
     for item in tt_treeview.get_children():
         tt_treeview.delete(item)
 
     current_semester_label = tt_semester_entry.get().strip()
     current_shift = shift_cb.get().strip()
 
+    # Filter entries for display
     display_entries = []
     if current_shift:
         display_entries = [
@@ -392,6 +449,11 @@ def update_tt_treeview():
                (not current_semester_label or e.get('semester') == current_semester_label)
         ]
 
+    # Clean up checked_items to only include valid indices
+    max_display_idx = len(display_entries) - 1
+    checked_items = {k: v for k, v in checked_items.items() if k <= max_display_idx}
+
+    # Insert filtered entries into treeview
     for i, entry in enumerate(display_entries):
         checked = checked_items.get(i, False)
         checkbox = "☑" if checked else "☐"
@@ -410,42 +472,69 @@ def update_tt_treeview():
         tt_treeview.insert('', 'end', values=values_to_insert, iid=str(i))
 
 def delete_tt_entry():
-    global timetable_entries, editing_index
+    global timetable_entries, editing_index, checked_items
     
-    selected_items = tt_treeview.selection()
+    # Get selected items from checkbox
+    selected = [idx for idx, checked in checked_items.items() if checked]
     
-    if not selected_items:
-        messagebox.showwarning("Selection Error", "Please select an entry to delete first.")
+    if not selected:
+        messagebox.showwarning("Selection Error", "Please select an entry to delete using the checkbox.")
+        return False
+    
+    if len(selected) > 1:
+        messagebox.showwarning("Multiple Selection", "Please select only one entry to delete.")
         return False
         
-    selected_iid = selected_items[0]
+    display_idx = selected[0]
     
-    try:
-        index = int(selected_iid)
-        if 0 <= index < len(timetable_entries):
-            if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this entry? This will also remove it from the database."):
-                entry = timetable_entries[index]
-                
-                # Delete from database if entry has an ID
-                if 'entry_id' in entry:
-                    from db.timetable_db import delete_timetable_entry_from_db
-                    if delete_timetable_entry_from_db(entry['entry_id']):
-                        print(f"Entry {entry['entry_id']} deleted from database")
-                    else:
-                        print(f"Warning: Could not delete entry {entry['entry_id']} from database")
-                
-                # Remove from local list
-                timetable_entries.pop(index)
-                if editing_index is not None:
-                    if editing_index == index:
-                        editing_index = None
-                        clear_tt_form()
-                    elif editing_index > index:
-                        editing_index -= 1
-                update_tt_treeview()
-                messagebox.showinfo("Success", "Entry deleted successfully.")
-                return True
-    except (ValueError, IndexError):
+    # Convert display index to actual timetable_entries index
+    current_semester_label = tt_semester_entry.get().strip()
+    current_shift = shift_cb.get().strip()
+    
+    if not current_shift:
+        messagebox.showwarning("Missing Context", "Please select a shift first.")
+        return False
+    
+    # Get filtered entries and their actual indices
+    display_entries = []
+    actual_indices = []
+    for i, entry in enumerate(timetable_entries):
+        if (entry.get('shift') == current_shift and 
+            (not current_semester_label or entry.get('semester') == current_semester_label)):
+            display_entries.append(entry)
+            actual_indices.append(i)
+    
+    if 0 <= display_idx < len(display_entries):
+        actual_idx = actual_indices[display_idx]
+        
+        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this entry?"):
+            entry = timetable_entries[actual_idx]
+            
+            # Delete from database if entry has an ID
+            if 'entry_id' in entry:
+                from db.timetable_db import delete_timetable_entry_from_db
+                if delete_timetable_entry_from_db(entry['entry_id']):
+                    print(f"Entry {entry['entry_id']} deleted from database")
+                else:
+                    print(f"Warning: Could not delete entry {entry['entry_id']} from database")
+            
+            # Remove from local list
+            timetable_entries.pop(actual_idx)
+            
+            # Update editing_index if necessary
+            if editing_index is not None:
+                if editing_index == actual_idx:
+                    editing_index = None
+                    clear_tt_form()
+                elif editing_index > actual_idx:
+                    editing_index -= 1
+            
+            # Clear checkbox selections and update display
+            checked_items.clear()
+            update_tt_treeview()
+            messagebox.showinfo("Success", "Entry deleted successfully.")
+            return True
+    else:
         messagebox.showerror("Error", "Invalid selection index.")
     
     return False
@@ -513,8 +602,10 @@ def clear_selection(event):
         if tt_treeview.selection():
             tt_treeview.selection_remove(tt_treeview.selection())
             clear_tt_form()
-            global editing_index
+            global editing_index, checked_items
             editing_index = None
+            checked_items.clear()
+            update_tt_treeview()
 
 
 def generate_timetable_dialog():
@@ -584,7 +675,7 @@ def generate_timetable_dialog():
     days_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
     for i, day_text in enumerate(days_options):
         var = tk.BooleanVar(value=True if day_text != "Saturday" else False)
-        cb_day = ttk.Checkbutton(days_frame, text=day_text, variable=var) # Renamed cb to cb_day
+        cb_day = ttk.Checkbutton(days_frame, text=day_text, variable=var)
         cb_day.pack(side="left", padx=2)
         day_vars[day_text] = var
 
@@ -686,13 +777,13 @@ def generate_timetable_dialog():
                 timetable_metadata=meta,
                 course_exceptions=exceptions
             )
+            # dialog.destroy()  # Close the dialog after successful generation
         except ValueError as e:
             messagebox.showerror("Invalid Input", f"Please check your input values: {e}")
         except Exception as e:
             messagebox.showerror("Error", f"An unexpected error occurred: {e}")
             import traceback
             traceback.print_exc()
-
 
     tk.Button(dialog_btn_frame, text="Cancel", command=dialog.destroy, width=10).pack(side="left", padx=10)
     tk.Button(dialog_btn_frame, text="Generate", command=validate_and_run_generation, width=10, bg="#007bff", fg="white").pack(side="right", padx=10)
@@ -742,13 +833,12 @@ def run_timetable_generation(shift, lectures_per_course, lecture_duration, start
             mutation_rate=0.15
         )
 
-        optimized_schedule, best_fitness = ga.evolve() # Corrected line
+        optimized_schedule, best_fitness = ga.evolve()
 
         print(f"Debug: GA returned optimized schedule with fitness: {best_fitness}")
         print(f"Debug: Optimized schedule contains {len(optimized_schedule or {})} lecture entries")
 
-
-        if optimized_schedule is None or not optimized_schedule: # Check if the schedule is empty or None
+        if optimized_schedule is None or not optimized_schedule:
             messagebox.showwarning("Generation Failed", "The genetic algorithm could not generate a valid timetable with the given constraints and data.")
             return
 
@@ -763,7 +853,9 @@ def run_timetable_generation(shift, lectures_per_course, lecture_duration, start
 
 
 def clear_entries_on_change(event, changed_field):
-    global editing_index
+    global editing_index, checked_items
+    editing_index = None
+    checked_items.clear()
     update_tt_treeview()
 
 
@@ -799,17 +891,7 @@ def display_timetable(optimized_timetable_data, available_time_slots,
     export_btn_frame = tk.Frame(main_container, pady=10)
     export_btn_frame.pack(fill="x", padx=20)
 
-    tk.Button(export_btn_frame, text="Export to PDF",
-             command=lambda: export_to_pdf(optimized_timetable_data, available_time_slots, 
-                                         class_sem_groups, timetable_metadata, display_title),
-             bg="#dc3545", fg="white", padx=15, pady=5, 
-             font=('Helvetica', 10)).pack(side="left", padx=10)
-
-    tk.Button(export_btn_frame, text="Close", command=win.destroy,
-             bg="#6c757d", fg="white", padx=15, pady=5, 
-             font=('Helvetica', 10)).pack(side="right", padx=10)
-
-    # Group data by class and semester
+    # Group data by class and semester first for export
     class_sem_groups = {}
     for key_tuple, details in optimized_timetable_data.items():
         class_sec = key_tuple[1]
@@ -826,6 +908,16 @@ def display_timetable(optimized_timetable_data, available_time_slots,
                         f"{details.get('course_indicators', '')}\n"
                         f"{details['teacher']}\nR: {details['room']}")
         class_sem_groups[group_key][time][day].append(lecture_info)
+
+    tk.Button(export_btn_frame, text="Export to PDF",
+             command=lambda: export_to_pdf(optimized_timetable_data, available_time_slots, 
+                                         class_sem_groups, timetable_metadata, display_title),
+             bg="#dc3545", fg="white", padx=15, pady=5, 
+             font=('Helvetica', 10)).pack(side="left", padx=10)
+
+    tk.Button(export_btn_frame, text="Close", command=win.destroy,
+             bg="#6c757d", fg="white", padx=15, pady=5, 
+             font=('Helvetica', 10)).pack(side="right", padx=10)
 
     # Add notebook for timetable display
     notebook = ttk.Notebook(main_container)
@@ -889,7 +981,8 @@ def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_dat
         filetypes=[("PDF files", "*.pdf")],
         title="Save Timetable as PDF"
     )
-    if not filepath: return
+    if not filepath: 
+        return
 
     try:
         doc = SimpleDocTemplate(filepath, pagesize=(30*inch, 20*inch), rightMargin=2*inch)
@@ -903,15 +996,14 @@ def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_dat
         story.append(Spacer(1, 0.2*inch))
 
         for class_key in grouped_display_data.keys():
-            semester, section = class_key  # 'section' here is the class/section name like 'G1'
+            semester, section = class_key
 
             # Determine the specific room for this class/section
-            # All lectures for this 'section' and 'semester' should have the same room.
-            room_for_this_section = "N/A" # Default if not found
+            room_for_this_section = "N/A"
             for lecture_details in optimized_timetable_data.values():
                 if lecture_details['class_section'] == section and lecture_details['semester'] == semester:
-                    room_for_this_section = str(lecture_details['room']) # Ensure it's a string
-                    break # Found the room for this section, assuming it's consistent
+                    room_for_this_section = str(lecture_details['room'])
+                    break
             
             # Add class header
             class_header = f"{semester} {section} Room: {room_for_this_section}"
@@ -980,8 +1072,9 @@ def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_dat
 def save_to_db_ui():
     save_timetable_from_treeview()
 
+
 def load_from_db_ui():
-    global timetable_entries
+    global timetable_entries, checked_items
 
     current_shift = shift_cb.get().strip()
     current_semester_label = tt_semester_entry.get().strip()
@@ -1015,15 +1108,22 @@ def load_from_db_ui():
     ]
     timetable_entries = temp_entries + loaded_db_entries
 
+    # Clear checkbox selections after loading
+    checked_items.clear()
     update_tt_treeview()
     messagebox.showinfo("Load Complete", f"{len(loaded_db_entries)} entries loaded from database for Shift: {current_shift} (Label: '{label_to_load if label_to_load else 'Any'}') and updated in list.")
 
 
 def show():
-    if TT_header_frame: TT_header_frame.pack(fill="x")
-    if TT_frame: TT_frame.pack(fill="both", expand=True)
+    if TT_header_frame: 
+        TT_header_frame.pack(fill="x")
+    if TT_frame: 
+        TT_frame.pack(fill="both", expand=True)
     update_tt_treeview()
 
+
 def hide():
-    if TT_header_frame: TT_header_frame.pack_forget()
-    if TT_frame: TT_frame.pack_forget()
+    if TT_header_frame: 
+        TT_header_frame.pack_forget()
+    if TT_frame: 
+        TT_frame.pack_forget()
