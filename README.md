@@ -24,7 +24,7 @@
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/timetable-datesheet-generator.git
+   git clone https://github.com/not-saad-zahid/Bacholers-Final-Year-Project/timetable-datesheet-generator.git
    cd timetable-datesheet-generator
    ```
 2. `pip install -r requirements.txt`
