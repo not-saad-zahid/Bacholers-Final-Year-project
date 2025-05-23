@@ -113,6 +113,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     tk.Label(left, text="Room:", bg="white", fg="#495057", font=normal_font).grid(row=5, column=2, pady=5, sticky="w")
     tt_room_entry = ttk.Entry(left, font=normal_font)
     tt_room_entry.grid(row=5, column=3, sticky="ew", pady=5)
+    tt_room_entry.bind('<KeyRelease>', on_room_filter_change)  # Add this line
 
     tk.Button(left, text="Save Entry", font=button_font, bg="#198754", fg="white",
             command=save_tt_entry, padx=10, pady=5, borderwidth=0).grid(row=6, column=0, columnspan=2, pady=15, sticky="w")
@@ -430,6 +431,9 @@ def on_treeview_click(event):
             except (ValueError, IndexError):
                 print(f"Error handling click on row_id: {row_id}")
 
+def on_room_filter_change(event=None):
+    update_tt_treeview()
+
 def update_tt_treeview():
     global timetable_entries, tt_treeview, checked_items
     
@@ -439,15 +443,16 @@ def update_tt_treeview():
 
     current_semester_label = tt_semester_entry.get().strip()
     current_shift = shift_cb.get().strip()
+    current_room = tt_room_entry.get().strip()  # Get current room filter
 
     # Filter entries for display
     display_entries = []
     if current_shift:
-        display_entries = [
-            e for e in timetable_entries
+        for e in timetable_entries:
             if e.get('shift') == current_shift and \
-               (not current_semester_label or e.get('semester') == current_semester_label)
-        ]
+               (not current_semester_label or e.get('semester') == current_semester_label) and \
+               (not current_room or str(e.get('room_name', '')).strip() == current_room):  # Add room filter
+                display_entries.append(e)
 
     # Clean up checked_items to only include valid indices
     max_display_idx = len(display_entries) - 1

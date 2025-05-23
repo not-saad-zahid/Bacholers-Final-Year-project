@@ -143,7 +143,7 @@ def main():
     tt_features = [
         "Conflict-free scheduling",
         "Teacher workload optimization",
-        "Room allocation"
+        "Automatic time schedule generation",
     ]
     tt_features_frame = tk.Frame(tt_card, bg="white")
     tt_features_frame.pack(pady=5)
