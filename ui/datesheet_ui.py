@@ -193,7 +193,8 @@ def _create_treeview_in_tab(tab_frame, tab_id):
 
     # Add "S.No" as the first data column after the checkbox
     columns = ("S.No", "Semester/Label", "Shift", "Class", "Teacher", "Course", "Code", "Indicators", "Room")
-    tree = ttk.Treeview(tree_container, columns=columns, show='tree headings', selectmode='none') # selectmode='none' as we use checkboxes
+    tree = ttk.Treeview(tree_container, columns=columns, show='tree headings', selectmode='none' # selectmode='none' as we use checkboxes
+    )
 
     style = ttk.Style()
     heading_font_tuple = ("Helvetica", 10, "bold") # Default
@@ -546,6 +547,7 @@ def load_entries_from_db():
         cursor = conn.cursor()
         
         # Query to load all relevant data, adjust table/column names as per your DB schema
+        # Modified query to exclude entries with indicators
         query = """
             SELECT 
                 t.semester, t.shift,
@@ -558,6 +560,7 @@ def load_entries_from_db():
             JOIN courses c ON t.course_id = c.id
             JOIN rooms r ON t.room_id = r.id
             JOIN class_sections cs ON t.class_section_id = cs.id
+            WHERE c.indicators IS NULL OR c.indicators = ''
         """ # This query assumes your schema. Adjust if necessary.
         
         cursor.execute(query)
@@ -722,7 +725,7 @@ def generate_datesheet_dialog():
         except Exception:
             return time_str.strip()
 
-    def export_datesheet_to_pdf(metadata, grouped_by_date, sorted_dates):
+    def export_datesheet_to_pdf(metadata, grouped_by_date, sorted_dates, exam_start_time_24, exam_end_time_24):
         if not REPORTLAB_AVAILABLE:
             messagebox.showerror("Missing Library", "ReportLab library is not installed.")
             return
@@ -741,7 +744,10 @@ def generate_datesheet_dialog():
             doc = SimpleDocTemplate(
                 filepath,
                 pagesize=landscape(A4),
-                rightMargin=40, leftMargin=40, topMargin=30, bottomMargin=30
+                rightMargin=10,    # Reduced right margin
+                leftMargin=10,     # Reduced left margin
+                topMargin=30,
+                bottomMargin=30
             )
             styles = getSampleStyleSheet()
             story = []
@@ -767,27 +773,41 @@ def generate_datesheet_dialog():
                     date_display = date_str
 
                 table_data = [
-                    ["Date", "Semester/Section", "Subject (Code)", "Room", "Invigilator"]
+                    ["Date & Day", "Semester/Section", "Subject (Code)", "Time", "Room", "Invigilator"]
                 ]
                 for e_sched in exams:
-                    # Semester/Section
+                    # Get standard data values
                     sem_sec = f"{e_sched.get('semester','')} / {e_sched.get('class_section','')}"
-                    # Subject and Code
                     subj_code = f"{e_sched.get('subject','')} – {e_sched.get('course_code','')}"
-                    # Room
                     room = e_sched.get('room','')
-                    # Invigilator
                     invigilator = e_sched.get('teacher','')
+                    
+                    # Format date and day together
+                    try:
+                        dt_obj = dtmod.datetime.strptime(date_str, "%Y-%m-%d")
+                        date_day_display = f"{dt_obj.strftime('%d-%m-%Y')}\n{dt_obj.strftime('%A')}"
+                    except Exception:
+                        date_day_display = date_str
+                    
+                    # Get time range
+                    start_ampm = to_ampm(e_sched.get('time', exam_start_time_24))
+                    end_ampm = to_ampm(exam_end_time_24)
+                    time_range = f"{start_ampm} - {end_ampm}"
+
                     table_data.append([
-                        date_display,
+                        date_day_display,
                         sem_sec,
                         subj_code,
+                        time_range,
                         room,
                         invigilator
                     ])
-                # Adjusted column widths for landscape A4
-                col_widths = [2.3*inch, 2*inch, 2.8*inch, 1.2*inch, 2.2*inch]
+
+                # Adjusted column widths to fit content better
+                col_widths = [2.2*inch, 2.0*inch, 2.5*inch, 1.5*inch, 1.0*inch, 2.0*inch]
                 table = Table(table_data, colWidths=col_widths, repeatRows=1)
+                
+                # Added wordWrap to table style
                 style = TableStyle([
                     ('GRID', (0,0), (-1,-1), 0.5, reportlab_colors.black),
                     ('BACKGROUND', (0,0), (-1,0), reportlab_colors.HexColor('#0d6efd')),
@@ -795,10 +815,11 @@ def generate_datesheet_dialog():
                     ('ALIGN', (0,0), (-1,0), 'CENTER'),
                     ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
                     ('FONTSIZE', (0,0), (-1,0), 11),
-                    ('FONTSIZE', (0,1), (-1,-1), 10),
+                    ('FONTSIZE', (0,1), (-1,-1), 9),  # Slightly smaller font for content
                     ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
                     ('ALIGN', (0,1), (-1,-1), 'CENTER'),
                     ('ROWBACKGROUNDS', (0,1), (-1,-1), [reportlab_colors.whitesmoke, reportlab_colors.lightgrey]),
+                    ('WORDWRAP', (0,0), (-1,-1), True),  # Enable word wrapping
                 ])
                 table.setStyle(style)
                 story.append(table)
@@ -915,7 +936,7 @@ def generate_datesheet_dialog():
             sorted_dates = sorted(grouped_by_date.keys(), key=lambda d: d if d == 'N/A' else dtmod.datetime.strptime(d, "%Y-%m-%d"))
             tk.Button(export_btn_frame, text="Export to PDF", bg="#dc3545", fg="white", font=("Helvetica", 10, "bold"),
                       padx=15, pady=5,
-                      command=lambda: export_datesheet_to_pdf(metadata, grouped_by_date, sorted_dates)).pack(side="left", padx=10)
+                      command=lambda: export_datesheet_to_pdf(metadata, grouped_by_date, sorted_dates, exam_start_time_24, exam_end_time_24)).pack(side="left", padx=10)
 
             # --- Notebook for date tabs ---
             preview_notebook = ttk.Notebook(win)
@@ -978,7 +999,8 @@ def generate_datesheet_dialog():
                     except Exception:
                         row_day = "N/A"
                     # Show both start and end time in 12-hour AM/PM format
-                    start_ampm = to_ampm(e_sched.get('time', exam_start_time_24))
+                    sched_time = e_sched.get('time') if e_sched.get('time') else exam_start_time_24
+                    start_ampm = to_ampm(sched_time)
                     end_ampm = to_ampm(exam_end_time_24)
                     time_range = f"{start_ampm} - {end_ampm}"
                     tree_preview.insert('', 'end', values=(
