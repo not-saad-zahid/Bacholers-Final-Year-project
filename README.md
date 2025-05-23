@@ -23,8 +23,9 @@
 ## Installation
 
 1. Clone the repository:
-   bash:
+   ```bash
    git clone https://github.com/your-username/timetable-datesheet-generator.git
    cd timetable-datesheet-generator
-2. pip install -r requirements.txt
-3. python main.py 
+   ```
+2. `pip install -r requirements.txt`
+3. `python main.py` 
