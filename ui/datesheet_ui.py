@@ -670,12 +670,12 @@ def generate_datesheet_dialog():
     start_date_var = tk.StringVar()
     tk.Entry(main_frame, textvariable=start_date_var, width=20).grid(row=7, column=1, sticky="w", pady=2)
 
-    tk.Label(main_frame, text="Exam Start Time (HH:MM, e.g., 09:00):").grid(row=8, column=0, sticky="w", pady=2)
-    exam_start_time_var = tk.StringVar(value="09:00")
+    tk.Label(main_frame, text="Exam Start Time (HH:MM AM/PM, e.g., 09:00 AM):").grid(row=8, column=0, sticky="w", pady=2)
+    exam_start_time_var = tk.StringVar(value="09:00 AM")
     tk.Entry(main_frame, textvariable=exam_start_time_var, width=20).grid(row=8, column=1, sticky="w", pady=2)
 
-    tk.Label(main_frame, text="Exam End Time (HH:MM, e.g., 13:00):").grid(row=9, column=0, sticky="w", pady=2)
-    exam_end_time_var = tk.StringVar(value="13:00")
+    tk.Label(main_frame, text="Exam End Time (HH:MM AM/PM, e.g., 01:00 PM):").grid(row=9, column=0, sticky="w", pady=2)
+    exam_end_time_var = tk.StringVar(value="01:00 PM")
     tk.Entry(main_frame, textvariable=exam_end_time_var, width=20).grid(row=9, column=1, sticky="w", pady=2)
 
     # Days of the week (Sunday excluded)
@@ -698,6 +698,119 @@ def generate_datesheet_dialog():
     # --- Dialog Buttons ---
     dialog_btn_frame = tk.Frame(main_frame)
     dialog_btn_frame.grid(row=20, column=0, columnspan=2, pady=20)
+
+    try:
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib import colors as reportlab_colors
+        from reportlab.lib.units import inch
+        REPORTLAB_AVAILABLE = True
+    except ImportError:
+        REPORTLAB_AVAILABLE = False
+
+    def to_24h(time_str):
+        import datetime as dtmod
+        try:
+            return dtmod.datetime.strptime(time_str.strip(), "%I:%M %p").strftime("%H:%M")
+        except Exception:
+            return time_str.strip()
+
+    def to_ampm(time_str):
+        import datetime as dtmod
+        try:
+            return dtmod.datetime.strptime(time_str.strip(), "%H:%M").strftime("%I:%M %p")
+        except Exception:
+            return time_str.strip()
+
+    def export_datesheet_to_pdf(metadata, grouped_by_date, sorted_dates):
+        if not REPORTLAB_AVAILABLE:
+            messagebox.showerror("Missing Library", "ReportLab library is not installed.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            title="Save Datesheet as PDF"
+        )
+        if not filepath:
+            return
+
+        try:
+            from reportlab.lib.pagesizes import landscape, A4
+            # Use landscape A4 and wider margins
+            doc = SimpleDocTemplate(
+                filepath,
+                pagesize=landscape(A4),
+                rightMargin=40, leftMargin=40, topMargin=30, bottomMargin=30
+            )
+            styles = getSampleStyleSheet()
+            story = []
+
+            def add_metadata():
+                story.append(Paragraph(f"<b>{metadata.get('college_name','')}</b>", styles['Title']))
+                story.append(Paragraph(metadata.get('datesheet_title', ''), styles['Heading2']))
+                story.append(Paragraph(f"Effective Date: {metadata.get('effective_date', '')}", styles['Normal']))
+                story.append(Paragraph(f"Department: {metadata.get('department_name', '')}", styles['Normal']))
+                story.append(Spacer(1, 0.2*inch))
+
+            add_metadata()
+
+            # Build table data for all dates (no PageBreak)
+            for idx, date_str in enumerate(sorted_dates):
+                exams = grouped_by_date[date_str]
+                # Date as "Monday, June 2, 2025"
+                try:
+                    import datetime as dtmod
+                    dt_obj = dtmod.datetime.strptime(date_str, "%Y-%m-%d")
+                    date_display = dt_obj.strftime("%A, %B %-d, %Y") if hasattr(dt_obj, "strftime") else date_str
+                except Exception:
+                    date_display = date_str
+
+                table_data = [
+                    ["Date", "Semester/Section", "Subject (Code)", "Room", "Invigilator"]
+                ]
+                for e_sched in exams:
+                    # Semester/Section
+                    sem_sec = f"{e_sched.get('semester','')} / {e_sched.get('class_section','')}"
+                    # Subject and Code
+                    subj_code = f"{e_sched.get('subject','')} – {e_sched.get('course_code','')}"
+                    # Room
+                    room = e_sched.get('room','')
+                    # Invigilator
+                    invigilator = e_sched.get('teacher','')
+                    table_data.append([
+                        date_display,
+                        sem_sec,
+                        subj_code,
+                        room,
+                        invigilator
+                    ])
+                # Adjusted column widths for landscape A4
+                col_widths = [2.3*inch, 2*inch, 2.8*inch, 1.2*inch, 2.2*inch]
+                table = Table(table_data, colWidths=col_widths, repeatRows=1)
+                style = TableStyle([
+                    ('GRID', (0,0), (-1,-1), 0.5, reportlab_colors.black),
+                    ('BACKGROUND', (0,0), (-1,0), reportlab_colors.HexColor('#0d6efd')),
+                    ('TEXTCOLOR', (0,0), (-1,0), reportlab_colors.whitesmoke),
+                    ('ALIGN', (0,0), (-1,0), 'CENTER'),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,0), 11),
+                    ('FONTSIZE', (0,1), (-1,-1), 10),
+                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('ALIGN', (0,1), (-1,-1), 'CENTER'),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [reportlab_colors.whitesmoke, reportlab_colors.lightgrey]),
+                ])
+                table.setStyle(style)
+                story.append(table)
+                story.append(Spacer(1, 0.2*inch))
+                # --- Removed PageBreak ---
+
+            doc.build(story)
+            messagebox.showinfo("Success", f"Datesheet exported to {filepath}")
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not export to PDF: {e}")
+            import traceback
+            traceback.print_exc()
 
     def validate_and_run_datesheet_generation():
         # Collect metadata
@@ -743,6 +856,10 @@ def generate_datesheet_dialog():
             messagebox.showinfo("Info", "Add entries first. These entries will be considered for scheduling.", parent=dialog)
             return
 
+        # Convert exam times to 24-hour format
+        exam_start_time_24 = to_24h(exam_start_time)
+        exam_end_time_24 = to_24h(exam_end_time)
+
         # --- Fix: Pass all required parameters to the GA ---
         try:
             ga = DatesheetGeneticAlgorithm(
@@ -750,14 +867,13 @@ def generate_datesheet_dialog():
                 max_generations=100,
                 population_size=50,
                 start_date=start_date,
-                exam_start_time=exam_start_time,
-                exam_end_time=exam_end_time,
+                exam_start_time=exam_start_time_24,
+                exam_end_time=exam_end_time_24,
                 exam_days=selected_days,
                 excluded_dates=excluded_dates
             )
             sched = ga.run()
 
-            # --- If GA returns empty, show a more helpful message ---
             if not sched:
                 messagebox.showinfo(
                     "Result",
@@ -771,55 +887,112 @@ def generate_datesheet_dialog():
                 )
                 return
 
-            # ...existing code for preview window...
+            # --- Group by date for tabbed display ---
+            from collections import defaultdict
+            import datetime as dtmod
+
+            grouped_by_date = defaultdict(list)
+            for e_sched in sched:
+                grouped_by_date[e_sched.get('date', 'N/A')].append(e_sched)
+
+            # --- Preview window with metadata and export button ---
             win = tk.Toplevel(root_window)
             win.title("Optimized Datesheet Preview")
-            win.geometry("950x550")
+            win.geometry("1100x700")
             win.grab_set()
 
-            cols = ('Semester', 'Subject', 'Course Code', 'Class Section', 'Date', 'Time', 'Room', 'Shift', 'Teacher (Invigilator)')
-            tree_preview = ttk.Treeview(win, columns=cols, show='headings')
+            # --- Metadata display at top ---
+            meta_frame = tk.Frame(win, pady=10)
+            meta_frame.pack(fill="x")
+            tk.Label(meta_frame, text=metadata.get("college_name", ""), font=("Helvetica", 16, "bold")).pack()
+            tk.Label(meta_frame, text=metadata.get("datesheet_title", ""), font=("Helvetica", 13)).pack()
+            tk.Label(meta_frame, text=f"Effective Date: {metadata.get('effective_date', '')}", font=("Helvetica", 10)).pack()
+            tk.Label(meta_frame, text=f"Department: {metadata.get('department_name', '')}", font=("Helvetica", 10, "italic")).pack()
 
-            tree_style = ttk.Style(win)
-            heading_font_tuple_preview = ("Helvetica", 10, "bold")
-            if _normal_font:
-                if isinstance(_normal_font, (list, tuple)) and len(_normal_font) >= 2:
-                    heading_font_tuple_preview = (_normal_font[0], _normal_font[1], 'bold')
-                elif hasattr(_normal_font, 'actual'):
-                    heading_font_tuple_preview = (_normal_font.actual()['family'], _normal_font.actual()['size'], 'bold')
-            tree_style.configure("Treeview.Heading", font=heading_font_tuple_preview)
+            # --- Export to PDF button ---
+            export_btn_frame = tk.Frame(win, pady=10)
+            export_btn_frame.pack(fill="x")
+            sorted_dates = sorted(grouped_by_date.keys(), key=lambda d: d if d == 'N/A' else dtmod.datetime.strptime(d, "%Y-%m-%d"))
+            tk.Button(export_btn_frame, text="Export to PDF", bg="#dc3545", fg="white", font=("Helvetica", 10, "bold"),
+                      padx=15, pady=5,
+                      command=lambda: export_datesheet_to_pdf(metadata, grouped_by_date, sorted_dates)).pack(side="left", padx=10)
 
-            col_configs_preview = [
-                ('Semester', 100), ('Subject', 150), ('Course Code', 80), ('Class Section', 100),
-                ('Date', 100), ('Time', 80), ('Room', 80), ('Shift', 80), ('Teacher (Invigilator)', 120)
-            ]
-            for c_text, c_width in col_configs_preview:
-                tree_preview.heading(c_text, text=c_text)
-                tree_preview.column(c_text, anchor='w' if c_text in ['Subject', 'Semester', 'Teacher (Invigilator)'] else 'center', width=c_width, minwidth=max(50, c_width-20))
+            # --- Notebook for date tabs ---
+            preview_notebook = ttk.Notebook(win)
+            preview_notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-            ysb = ttk.Scrollbar(win, orient='vertical', command=tree_preview.yview)
-            xsb = ttk.Scrollbar(win, orient='horizontal', command=tree_preview.xview)
-            tree_preview.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
+            def to_ampm(time_str):
+                try:
+                    return dtmod.datetime.strptime(time_str, "%H:%M").strftime("%I:%M %p")
+                except Exception:
+                    return time_str
 
-            tree_preview.grid(row=0, column=0, sticky='nsew')
-            ysb.grid(row=0, column=1, sticky='ns')
-            xsb.grid(row=1, column=0, sticky='ew')
+            for date_str in sorted_dates:
+                exams = grouped_by_date[date_str]
+                # Determine day name
+                try:
+                    day_name = dtmod.datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
+                except Exception:
+                    day_name = "N/A"
 
-            win.grid_rowconfigure(0, weight=1)
-            win.grid_columnconfigure(0, weight=1)
+                tab_frame = ttk.Frame(preview_notebook)
+                preview_notebook.add(tab_frame, text=f"{date_str} ({day_name})")
 
-            for e_sched in sched:
-                tree_preview.insert('', 'end', values=(
-                    e_sched.get('semester', 'N/A'),
-                    e_sched.get('subject', 'N/A'),
-                    e_sched.get('course_code', 'N/A'),
-                    e_sched.get('class_section', 'N/A'),
-                    e_sched.get('date', 'N/A'),
-                    e_sched.get('time', 'N/A'),
-                    e_sched.get('room', 'N/A'),
-                    e_sched.get('shift', e_sched.get('shift', 'N/A')),
-                    e_sched.get('teacher', e_sched.get('teacher', 'N/A'))
-                ))
+                # Columns: Semester, Subject, Course Code, Class Section, Day, Date, Time, Room, Shift, Teacher (Invigilator)
+                cols = ('Semester', 'Subject', 'Course Code', 'Class Section', 'Day', 'Date', 'Time', 'Room', 'Shift', 'Teacher (Invigilator)')
+                tree_preview = ttk.Treeview(tab_frame, columns=cols, show='headings')
+
+                tree_style = ttk.Style(tab_frame)
+                heading_font_tuple_preview = ("Helvetica", 10, "bold")
+                if _normal_font:
+                    if isinstance(_normal_font, (list, tuple)) and len(_normal_font) >= 2:
+                        heading_font_tuple_preview = (_normal_font[0], _normal_font[1], 'bold')
+                    elif hasattr(_normal_font, 'actual'):
+                        heading_font_tuple_preview = (_normal_font.actual()['family'], _normal_font.actual()['size'], 'bold')
+                tree_style.configure("Treeview.Heading", font=heading_font_tuple_preview)
+
+                col_configs_preview = [
+                    ('Semester', 100), ('Subject', 150), ('Course Code', 80), ('Class Section', 100),
+                    ('Day', 90), ('Date', 100), ('Time', 120), ('Room', 80), ('Shift', 80), ('Teacher (Invigilator)', 120)
+                ]
+                for c_text, c_width in col_configs_preview:
+                    tree_preview.heading(c_text, text=c_text)
+                    tree_preview.column(c_text, anchor='w' if c_text in ['Subject', 'Semester', 'Teacher (Invigilator)'] else 'center', width=c_width, minwidth=max(50, c_width-20))
+
+                ysb = ttk.Scrollbar(tab_frame, orient='vertical', command=tree_preview.yview)
+                xsb = ttk.Scrollbar(tab_frame, orient='horizontal', command=tree_preview.xview)
+                tree_preview.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
+
+                tree_preview.grid(row=0, column=0, sticky='nsew')
+                ysb.grid(row=0, column=1, sticky='ns')
+                xsb.grid(row=1, column=0, sticky='ew')
+
+                tab_frame.grid_rowconfigure(0, weight=1)
+                tab_frame.grid_columnconfigure(0, weight=1)
+
+                # For each exam, add row with day and time range
+                for e_sched in exams:
+                    # Compute day name for each row (should match tab, but robust)
+                    try:
+                        row_day = dtmod.datetime.strptime(e_sched.get('date', ''), "%Y-%m-%d").strftime("%A")
+                    except Exception:
+                        row_day = "N/A"
+                    # Show both start and end time in 12-hour AM/PM format
+                    start_ampm = to_ampm(e_sched.get('time', exam_start_time_24))
+                    end_ampm = to_ampm(exam_end_time_24)
+                    time_range = f"{start_ampm} - {end_ampm}"
+                    tree_preview.insert('', 'end', values=(
+                        e_sched.get('semester', 'N/A'),
+                        e_sched.get('subject', 'N/A'),
+                        e_sched.get('course_code', 'N/A'),
+                        e_sched.get('class_section', 'N/A'),
+                        row_day,
+                        e_sched.get('date', 'N/A'),
+                        time_range,
+                        e_sched.get('room', 'N/A'),
+                        e_sched.get('shift', e_sched.get('shift', 'N/A')),
+                        e_sched.get('teacher', e_sched.get('teacher', 'N/A'))
+                    ))
             dialog.destroy()
         except Exception as ex:
             messagebox.showerror("GA Execution Error", f"Failed to generate datesheet: {ex}\n\nNote: The Genetic Algorithm (datesheet_ga.py) might need adaptation.", parent=dialog)
