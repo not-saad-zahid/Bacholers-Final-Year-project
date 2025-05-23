@@ -1,11 +1,30 @@
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, filedialog # Added filedialog
 import datetime
-import random
+import random # Not directly used in this snippet but often in GA context
 import sqlite3
 from datetime import datetime, timedelta
 from algorithms.timetable_ga import TimetableGeneticAlgorithm
+# Ensure timetable_db functions are correctly imported
 from db.timetable_db import init_timetable_db, fetch_id_from_name, load_timetable, load_timetable_for_ga
+from utils.timeslots import generate_time_slots
+
+def validate_time_format(time_str):
+    try:
+        datetime.strptime(time_str.strip(), "%I:%M %p")
+        return True
+    except ValueError:
+        return False
+
+# For PDF and Excel export
+try:
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib import colors as reportlab_colors
+    from reportlab.lib.units import inch
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
 
 # Global variables
 timetable_entries = []
@@ -15,918 +34,1101 @@ TT_frame = None
 tt_treeview = None
 tt_teacher_entry = None
 tt_course_entry = None
+tt_course_code_entry = None
+tt_indicators_entry = None
 tt_room_entry = None
 tt_class_entry = None
+tt_semester_entry = None # Changed from semester_cb
 tt_generate_button = None
 root = None
 conn = None  # Database connection
-
+college_name_var = None
+timetable_title_var = None
+effective_date_var = None
+department_name_var = None
+checked_items = {}
 
 def initialize(master, title_font, header_font, normal_font, button_font, return_home_func):
-    global TT_header_frame, TT_frame, tt_treeview, root
-    global tt_teacher_entry, tt_course_entry, tt_room_entry, tt_class_entry, tt_generate_button, semester_cb, shift_cb, start_time_var, end_time_var
-    global conn  # Declare conn as global to use it throughout the file
+    global TT_header_frame, TT_frame, tt_treeview, root, conn
+    global tt_teacher_entry, tt_course_entry, tt_course_code_entry, tt_indicators_entry, tt_room_entry, tt_class_entry
+    global tt_generate_button, tt_semester_entry, shift_cb # Removed start_time_var, end_time_var if not used globally here
 
-    # Initialize database
-    conn = init_timetable_db()  # Initialize and assign the database connection
+    root = master
 
-    # Header
+    init_timetable_db()                     # sets up tables on module‑level conn
+    from db.timetable_db import conn as db_conn
+    conn = db_conn
+
     TT_header_frame = tk.Frame(root, bg="#0d6efd", height=60)
-    TT_header_frame.pack(fill="x")
-    header_label = tk.Label(TT_header_frame, text="Timetable Generator", bg="#0d6efd", fg="white", font=title_font)
+    header_label = tk.Label(TT_header_frame, text="Timetable Data Entry", bg="#0d6efd", fg="white", font=title_font)
     header_label.pack(side="left", padx=20, pady=15)
     btn_home = tk.Button(TT_header_frame, text="Home", command=return_home_func,
                          bg="white", fg="#0d6efd", font=normal_font, padx=15, pady=5, borderwidth=0)
     btn_home.pack(side="right", padx=20, pady=10)
 
-    # Main frame
     TT_frame = tk.Frame(root, bg="white")
-    TT_frame.pack(fill="both", expand=True)
     TT_frame.grid_rowconfigure(0, weight=1)
     TT_frame.grid_rowconfigure(1, weight=3)
     TT_frame.grid_columnconfigure(0, weight=1)
 
-       # Left pane for inputs
     left = tk.Frame(TT_frame, bg="white", padx=20, pady=20)
     left.grid(row=0, column=0, sticky="nsew")
 
-    # Right pane for display
     right = tk.Frame(TT_frame, bg="#f8f9fa", padx=20, pady=20)
-    right.grid(row=1, column=0, sticky="nsew", columnspan=2)
-    
-    # Input heading
-    tk.Label(left, text="Enter Timetable Details", bg="white", fg="#212529", font=header_font).grid(row=0, column=0, columnspan=2, pady=10, sticky="w")
-    # ttk.Separator(left, orient='horizontal').grid(row=1, column=0, columnspan=3, sticky='ew', pady=5)
+    right.grid(row=1, column=0, sticky="nsew")
 
-    # Semester
-    tk.Label(left, text="Semester (1-8):", bg="white", font=normal_font).grid(row=2, column=0, pady=5, sticky="w")
-    semester_cb = ttk.Combobox(left, values=[str(i) for i in range(1, 9)])
-    semester_cb.grid(row=2, column=1, sticky="ew", pady=5)
-    semester_cb.set("1")
-    semester_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)  # Bind event
+    tk.Label(left, text="Enter Timetable Details", bg="white", fg="#212529", font=header_font).grid(row=0, column=0, columnspan=4, pady=10, sticky="w")
+    ttk.Separator(left, orient='horizontal').grid(row=1, column=0, columnspan=6, sticky='ew', pady=5)
 
-    # Shift (tabbed to the right)
-    tk.Label(left, text="Shift:", bg="white", font=normal_font).grid(row=2, column=2, padx=(30, 0), pady=5, sticky="w")
-    shift_cb = ttk.Combobox(left, values=["Morning", "Evening"])
+    tk.Label(left, text="Semester/Label:", bg="white").grid(row=2, column=0, pady=5, sticky="w")
+    tt_semester_entry = ttk.Entry(left, font=normal_font, width=12)
+    tt_semester_entry.grid(row=2, column=1, sticky="ew", pady=5, padx=(0,10))
+
+    tk.Label(left, text="Shift:", bg="white").grid(row=2, column=2, pady=5, sticky="w")
+    shift_cb = ttk.Combobox(left, values=["Morning", "Evening"], width=10, state="readonly")
     shift_cb.grid(row=2, column=3, sticky="ew", pady=5)
     shift_cb.set("Morning")
-    shift_cb.bind("<<ComboboxSelected>>", clear_entries_on_change)  # Bind event
+    shift_cb.bind("<<ComboboxSelected>>", lambda event: clear_entries_on_change(event, "shift"))
 
-    # Initialize start_time_var
-    start_time_var = tk.StringVar(value="8:00 AM")  # Default value
-    # Initialize end_time_var
-    end_time_var = tk.StringVar(value="1:00 PM")  # Default value
-    
-    # Teacher Name
-    tk.Label(left, text="Teacher Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=0, pady=5, sticky="w")
-    tt_teacher_entry = ttk.Entry(left, font=normal_font)
-    tt_teacher_entry.grid(row=3, column=1, sticky="ew", pady=5)
-
-    # Course (tabbed to the right)
-    tk.Label(left, text="Course Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=2, padx=(30, 0), pady=5, sticky="w")
-    tt_course_entry = ttk.Entry(left, font=normal_font)
-    tt_course_entry.grid(row=3, column=3, sticky="ew", pady=5)
-
-    # Room
-    tk.Label(left, text="Room:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=0, pady=5, sticky="w")
-    tt_room_entry = ttk.Entry(left, font=normal_font)
-    tt_room_entry.grid(row=4, column=1, sticky="ew", pady=5)
-
-    # Class/Section (tabbed to the right)
-    tk.Label(left, text="Class/Section:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=2, padx=(30, 0), pady=5, sticky="w")
+    tk.Label(left, text="Class/Section:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=0, pady=5, sticky="w")
     tt_class_entry = ttk.Entry(left, font=normal_font)
-    tt_class_entry.grid(row=4, column=3, sticky="ew", pady=5)
+    tt_class_entry.grid(row=3, column=1, sticky="ew", pady=5, padx=(0,10))
 
-    # Save Entry button
+    tk.Label(left, text="Teacher Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=2, pady=5, sticky="w")
+    tt_teacher_entry = ttk.Entry(left, font=normal_font)
+    tt_teacher_entry.grid(row=3, column=3, sticky="ew", pady=5)
+
+    tk.Label(left, text="Course Name:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=0, pady=5, sticky="w")
+    tt_course_entry = ttk.Entry(left, font=normal_font)
+    tt_course_entry.grid(row=4, column=1, sticky="ew", pady=5, padx=(0,10))
+
+    tk.Label(left, text="Course Code:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=2, pady=5, sticky="w")
+    tt_course_code_entry = ttk.Entry(left, font=normal_font)
+    tt_course_code_entry.grid(row=4, column=3, sticky="ew", pady=5)
+
+    tk.Label(left, text="Indicators (e.g., Lab C):", bg="white", fg="#495057", font=normal_font).grid(row=5, column=0, pady=5, sticky="w")
+    tt_indicators_entry = ttk.Entry(left, font=normal_font)
+    tt_indicators_entry.grid(row=5, column=1, sticky="ew", pady=5, padx=(0,10))
+
+    tk.Label(left, text="Room:", bg="white", fg="#495057", font=normal_font).grid(row=5, column=2, pady=5, sticky="w")
+    tt_room_entry = ttk.Entry(left, font=normal_font)
+    tt_room_entry.grid(row=5, column=3, sticky="ew", pady=5)
+    tt_room_entry.bind('<KeyRelease>', on_room_filter_change)  # Add this line
+
     tk.Button(left, text="Save Entry", font=button_font, bg="#198754", fg="white",
-              command=save_tt_entry, padx=10, pady=5, borderwidth=0).grid(row=5, column=0, pady=5)
+            command=save_tt_entry, padx=10, pady=5, borderwidth=0).grid(row=6, column=0, columnspan=2, pady=15, sticky="w")
 
-    # Right: Treeview
+    tk.Button(left, text="Edit Entry", font=button_font, bg="#ffc107", fg="black",
+            command=edit_selected_entry, padx=10, pady=5, borderwidth=0).grid(row=6, column=1, pady=15, sticky="w")
+
     tk.Label(right, text="Saved Timetable Entries", bg="#f8f9fa", fg="#212529", font=header_font).pack(anchor="w", pady=5)
     tree_container = tk.Frame(right, bg="#f8f9fa")
     tree_container.pack(fill="both", expand=True)
-    
-    # Create the Treeview widget
-    tt_treeview = ttk.Treeview(tree_container,
-                               columns=("#", "Semester", "Shift", "Teacher", "Course", "Room", "Class"),
-                               show='headings', selectmode='browse')
 
-    # Configure the Treeview columns
-    columns = ["#", "Semester", "Shift", "Teacher", "Course", "Room", "Class"]
+    columns = ["Select","#", "Semester/Label", "Shift", "Class", "Teacher", "Course", "Code", "Indicators", "Room"]
+    tt_treeview = ttk.Treeview(tree_container, columns=columns, show='headings', selectmode='browse')
+
     for col in columns:
         tt_treeview.heading(col, text=col)
-        tt_treeview.column(col, width=100, anchor='center')
+        if col == "Select":
+            tt_treeview.column(col, width=50, anchor='center', stretch=tk.NO)
+        elif col == "#":
+            tt_treeview.column(col, width=30, anchor='center', stretch=tk.NO)
+        elif col == "Course":
+            tt_treeview.column(col, width=180, anchor='w')
+        elif col == "Teacher":
+            tt_treeview.column(col, width=120, anchor='w')
+        elif col == "Indicators":
+            tt_treeview.column(col, width=100, anchor='center')
+        elif col == "Semester/Label":
+             tt_treeview.column(col, width=100, anchor='w')
+        else:
+            tt_treeview.column(col, width=80, anchor='center')
 
-    # Add a scrollbar to the Treeview
     scrollbar = ttk.Scrollbar(tree_container, orient='vertical', command=tt_treeview.yview)
     tt_treeview.configure(yscrollcommand=scrollbar.set)
     tt_treeview.pack(side='left', fill='both', expand=True)
     scrollbar.pack(side='right', fill='y')
-
-    # Bind events to the Treeview and its parent frame
-    tt_treeview.bind("<Double-1>", edit_tt_entry)
-    tt_treeview.bind("<Button-1>", clear_selection)
-    left.bind("<Button-1>", clear_selection)  # For clicks anywhere in the root window
-    right.bind("<Button-1>", clear_selection)  # For clicks anywhere in the root window
-
-    # Action buttons
+    tt_treeview.bind("<Button-1>", on_treeview_click)
     btn_frame = tk.Frame(right, bg="#f8f9fa")
     btn_frame.pack(fill='x', pady=10)
+
     tk.Button(btn_frame, text="Delete Selected", font=button_font, bg="#dc3545", fg="white",
               command=delete_tt_entry, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    tk.Button(btn_frame, text="Clear All", font=button_font, bg="#6c757d", fg="white",
+    tk.Button(btn_frame, text="Clear All Entries", font=button_font, bg="#6c757d", fg="white",
               command=clear_all_tt_entries, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    tt_generate_button = tk.Button(btn_frame, text="Generate Time table", font=button_font, bg="#0d6efd", fg="white",
-                                   command=generate_timetable, padx=10, pady=5, borderwidth=0)
+
+    db_frame = tk.Frame(right, bg="#f8f9fa")
+    db_frame.pack(fill='x', pady=5)
+    tk.Button(db_frame, text="Save Entries to DB", font=button_font, bg="#198754", fg="white",
+              command=save_to_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
+    tk.Button(db_frame, text="Load from DB", font=button_font, bg="#0d6efd", fg="white",
+              command=load_from_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
+
+    tt_generate_button = tk.Button(btn_frame, text="Generate Timetable", font=button_font, bg="#007bff", fg="white",
+                                   command=generate_timetable_dialog, padx=10, pady=5, borderwidth=0)
     tt_generate_button.pack(side='right', padx=5)
 
-    # DB buttons
-    db_frame = tk.Frame(right, bg="#f8f9fa")
-    db_frame.pack(fill='x', pady=10)
-    tk.Button(db_frame, text="Save Data", font=button_font, bg="#198754", fg="white",
-              command=save_to_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    tk.Button(db_frame, text="Load Data", font=button_font, bg="#0d6efd", fg="white",
-              command=load_from_db_ui, padx=10, pady=5, borderwidth=0).pack(side='right', padx=5)
+    global college_name_var, timetable_title_var, effective_date_var, department_name_var
+    college_name_var = tk.StringVar(value="GOVT. ISLAMIA GRADUATE COLLEGE, CIVIL LINES, LAHORE")
+    timetable_title_var = tk.StringVar(value="TIME TABLE FOR BS PROGRAMS")
+    effective_date_var = tk.StringVar(value=datetime.now().strftime("%d-%m-%Y"))
+    department_name_var = tk.StringVar(value="DEPARTMENT OF COMPUTER SCIENCE")
 
     update_tt_treeview()
-    
-    
-    
-def fetch_name_from_id(table, id):
-    """
-    Fetch the name of a record from the database by its ID.
-    """
-    try:
-        query = f"SELECT name FROM {table} WHERE id = ?"
-        cur = conn.cursor()
-        cur.execute(query, (id,))
-        result = cur.fetchone()
-        return result[0] if result else "Unknown"
-    except sqlite3.Error as e:
-        messagebox.showerror("Database Error", f"Failed to fetch name from {table}: {e}")
-        return "Unknown"
-    
+
 def clear_all_tt_entries():
-    global timetable_entries
+    global timetable_entries, editing_index, checked_items
     if not timetable_entries:
         messagebox.showinfo("Info", "No entries to clear")
         return
-    if messagebox.askyesno("Confirm", "Are you sure you want to clear all entries?"):
+    if messagebox.askyesno("Confirm", "Are you sure you want to clear all current timetable entries? This does not affect the database until you save."):
         timetable_entries.clear()
+        editing_index = None
+        checked_items.clear()  # Clear checkbox states
+        clear_tt_form()
         update_tt_treeview()
+        messagebox.showinfo("Cleared", "All current entries have been cleared.")
 
+def edit_selected_entry():
+    global editing_index
+    
+    # Get selected items from checkbox
+    selected = [idx for idx, checked in checked_items.items() if checked]
+    if not selected:
+        messagebox.showwarning("No Selection", "Please select an entry to edit using the checkbox.")
+        return
+    
+    if len(selected) > 1:
+        messagebox.showwarning("Multiple Selection", "Please select only one entry to edit.")
+        return
+    
+    display_idx = selected[0]
+    
+    # Convert display index to actual timetable_entries index
+    current_semester_label = tt_semester_entry.get().strip()
+    current_shift = shift_cb.get().strip()
+    
+    if not current_shift:
+        messagebox.showwarning("Missing Context", "Please select a shift first.")
+        return
+    
+    # Get filtered entries (same logic as update_tt_treeview)
+    display_entries = []
+    actual_indices = []
+    for i, entry in enumerate(timetable_entries):
+        if (entry.get('shift') == current_shift and 
+            (not current_semester_label or entry.get('semester') == current_semester_label)):
+            display_entries.append(entry)
+            actual_indices.append(i)
+    
+    if 0 <= display_idx < len(display_entries):
+        actual_idx = actual_indices[display_idx]
+        entry_to_edit = timetable_entries[actual_idx]
+        
+        clear_tt_form()
+        tt_semester_entry.insert(0, entry_to_edit.get('semester', ''))
+        shift_cb.set(entry_to_edit.get('shift', 'Morning'))
+        tt_class_entry.insert(0, entry_to_edit.get('class_section_name', ''))
+        tt_teacher_entry.insert(0, entry_to_edit.get('teacher_name', ''))
+        tt_course_entry.insert(0, entry_to_edit.get('course_name', ''))
+        tt_course_code_entry.insert(0, entry_to_edit.get('course_code', ''))
+        tt_indicators_entry.insert(0, entry_to_edit.get('course_indicators', ''))
+        tt_room_entry.insert(0, str(entry_to_edit.get('room_name', '')))
+        
+        # Set editing_index to the actual index
+        editing_index = actual_idx
+        
+        # Clear checkbox selection after editing
+        checked_items.clear()
+        update_tt_treeview()
+    else:
+        messagebox.showerror("Error", "Invalid selection.")
 
 def save_tt_entry():
-    """
-    Save a timetable entry after validating the input fields.
-    """
     global editing_index, timetable_entries
-    teacher = tt_teacher_entry.get().strip()
-    course = tt_course_entry.get().strip()
-    room = tt_room_entry.get().strip()
-    class_section = tt_class_entry.get().strip()
-    semester = semester_cb.get().strip()
+    
+    # Get form values
+    teacher_name = tt_teacher_entry.get().strip()
+    course_name = tt_course_entry.get().strip()
+    course_code = tt_course_code_entry.get().strip()
+    indicators = tt_indicators_entry.get().strip()
+    room_name = tt_room_entry.get().strip()
+    class_section_name = tt_class_entry.get().strip()
+    semester_label = tt_semester_entry.get().strip()
     shift = shift_cb.get().strip()
 
-    # Validate Semester
+    # Validation check
+    if not all([teacher_name, course_name, course_code, room_name, class_section_name, semester_label, shift]):
+        messagebox.showwarning("Missing Fields", "All fields except Indicators must be filled.")
+        return False
+
+    if not teacher_name.replace(" ", "").isalpha():
+        messagebox.showwarning("Invalid Teacher Name", "Teacher name should primarily contain letters.")
+        return False
+    if not course_code.isalnum() and '-' not in course_code:
+        messagebox.showwarning("Invalid Course Code", "Course code should be alphanumeric (e.g., CS101, CC-214).")
+        return False
     try:
-        semester_val = int(semester)
-        if semester_val < 1 or semester_val > 8:
-            raise ValueError
+        int(room_name)
     except ValueError:
-        messagebox.showwarning("Invalid Semester", "Semester must be a number between 1 and 8.")
-        return
+        messagebox.showwarning("Invalid Room", "Room should be a number (e.g., 71).")
+        return False
+    if not class_section_name.replace(" ", "").isalnum():
+         messagebox.showwarning("Invalid Class/Section", "Class/Section must be alphanumeric (e.g., BSCS G1, A).")
+         return False
 
-    # Validate Shift
-    if shift not in ["Morning", "Evening"]:
-        messagebox.showwarning("Invalid Shift", "Shift must be either 'Morning' or 'Evening'.")
-        return
-
-    # Validate Teacher Name
-    if not teacher or not teacher.isalpha():
-        messagebox.showwarning("Invalid Teacher Name", "Teacher name must contain only letters and cannot be empty.")
-        return
-
-    # Validate Course Name
-    if not course:
-        messagebox.showwarning("Invalid Course Name", "Course name cannot be empty.")
-        return
-
-    # Validate Room (must be a positive integer)
-    try:
-        room_val = int(room)
-        if room_val <= 0:
-            raise ValueError
-    except ValueError:
-        messagebox.showwarning("Invalid Room", "Room must be a positive integer.")
-        return
-
-    # Validate Class/Section (must be alphanumeric)
-    if not class_section or not class_section.isalnum():
-        messagebox.showwarning("Invalid Class/Section", "Class/Section must be alphanumeric and cannot be empty.")
-        return
-
-    # Create the entry dictionary
-    entry = {
-        "teacher_id": None,  # Placeholder for teacher_id
-        "course_id": None,   # Placeholder for course_id
-        "room_id": None,     # Placeholder for room_id
-        "class_section_id": None,  # Placeholder for class_section_id
-        "semester": semester_val,
+    entry_data = {
+        "teacher_name": teacher_name,
+        "course_name": course_name,
+        "course_code": course_code,
+        "course_indicators": indicators,
+        "room_name": room_name,
+        "class_section_name": class_section_name,
+        "semester": semester_label,
         "shift": shift,
-        "teacher_name": teacher,
-        "course_name": course,
-        "room_name": room,
-        "class_section_name": class_section
+        "teacher_id": None,
+        "course_id": None,
+        "room_id": None,
+        "class_section_id": None
     }
 
-    # Add or update the entry in the timetable
-    if editing_index is not None:
-        timetable_entries[editing_index] = entry
-        editing_index = None
+    if editing_index is not None and 0 <= editing_index < len(timetable_entries):
+        # Update existing entry
+        timetable_entries[editing_index] = entry_data
+        action = "updated"
+        editing_index = None  # Reset editing index
     else:
-        timetable_entries.append(entry)
+        # Add new entry
+        timetable_entries.append(entry_data)
+        action = "added"
 
-    # Update the treeview
-    update_tt_treeview()
-
-
-    
-            
-def save_timetable_from_treeview():
-    """
-    Save timetable entries currently displayed in the treeview to the database for the current semester and shift.
-    """
-    global conn
-
-    # Get the current semester and shift
-    current_semester = semester_cb.get().strip()
-    current_shift = shift_cb.get().strip()
-
-    if not current_semester or not current_shift:
-        messagebox.showwarning("Missing Data", "Please select Semester and Shift before saving.")
-        return
-
-    try:
-        current_semester_val = int(current_semester)
-    except ValueError:
-        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8).")
-        return
-
-    # Retrieve entries from the treeview
-    treeview_entries = []
-    for item in tt_treeview.get_children():
-        values = tt_treeview.item(item, 'values')
-        treeview_entries.append({
-            "semester": int(values[1]),
-            "shift": values[2],
-            "teacher_name": values[3],
-            "course_name": values[4],
-            "room_name": values[5],
-            "class_section_name": values[6]
-        })
-
-    # Filter entries for the current semester and shift
-    filtered_entries = [
-        entry for entry in treeview_entries
-        if entry["semester"] == current_semester_val and entry["shift"] == current_shift
-    ]
-
-    if not filtered_entries:
-        messagebox.showwarning("Empty", f"No entries found for Semester {current_semester_val} and Shift {current_shift} to save.")
-        return
-
-    # Save the filtered entries to the database
-    init_timetable_db()
-    with conn:
-        for entry in filtered_entries:
-            try:
-                # Fetch IDs for teacher, course, room, and class_section
-                teacher_id = fetch_id_from_name("teachers", entry["teacher_name"])
-                course_id = fetch_id_from_name("courses", entry["course_name"], teacher_id=teacher_id)
-                room_id = fetch_id_from_name("rooms", entry["room_name"])
-                class_section_id = fetch_id_from_name(
-                    "class_sections", entry["class_section_name"],
-                    semester=current_semester_val, shift=current_shift
-                )
-
-                # Insert the entry into the database
-                conn.execute('''
-                    INSERT INTO timetable (
-                        teacher_id, course_id, room_id, class_section_id, semester, shift
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                ''', (
-                    teacher_id,
-                    course_id,
-                    room_id,
-                    class_section_id,
-                    current_semester_val,
-                    current_shift
-                ))
-                print("Inserted timetable entry:", entry)
-            except sqlite3.Error as e:
-                print("Error inserting timetable entry:", e)
-    conn.commit()
-    print("Timetable saved successfully.")
-    messagebox.showinfo("Success", f"Saved {len(filtered_entries)} entries for Semester {current_semester_val} and Shift {current_shift}.")
-        
-
-def clear_tt_form():
-    """
-    Clear all input fields in the form.
-    """
-    tt_teacher_entry.delete(0, tk.END)
-    tt_course_entry.delete(0, tk.END)
-    tt_room_entry.delete(0, tk.END)
-    tt_class_entry.delete(0, tk.END)
-
-
-def update_tt_treeview(current_shift=None, current_semester=None, is_loading=False):
-    """
-    Update the treeview with the current timetable entries.
-    :param current_shift: Filter entries by the current shift.
-    :param current_semester: Filter entries by the current semester.
-    :param is_loading: A flag to indicate if data is being loaded from the database.
-    """
-    # Clear the existing treeview items
-    for item in tt_treeview.get_children():
-        tt_treeview.delete(item)
-
-    # Filter entries for the current semester and shift if provided
-    filtered_entries = timetable_entries
-    if current_shift and current_semester:
-        filtered_entries = [
-            e for e in timetable_entries
-            if e.get('shift') == current_shift and e.get('semester') == current_semester
-        ]
-
-    # Populate the treeview with updated entries
-    for i, e in enumerate(filtered_entries):
-        # Ensure all required keys exist in the entry
-        if not all(key in e for key in ['teacher_id', 'course_id', 'room_id', 'class_section_id', 'semester', 'shift']):
-            messagebox.showwarning("Invalid Entry", f"Entry {i + 1} is missing required fields and will be skipped.")
-            continue
-
-        # Fetch names only when loading data
-        if is_loading:
-            teacher_name = fetch_name_from_id("teachers", e['teacher_id'])
-            course_name = fetch_name_from_id("courses", e['course_id'])
-            room_name = fetch_name_from_id("rooms", e['room_id'])
-            class_section_name = fetch_name_from_id("class_sections", e['class_section_id'])
-        else:
-            teacher_name = e.get('teacher_name', 'Unknown')
-            course_name = e.get('course_name', 'Unknown')
-            room_name = e.get('room_name', 'Unknown')
-            class_section_name = e.get('class_section_name', 'Unknown')
-
-        # Insert the entry into the treeview
-        tt_treeview.insert('', 'end', values=(
-            i + 1,  # Entry number
-            e['semester'],  # Semester
-            e['shift'],  # Shift
-            teacher_name,  # Teacher name
-            course_name,  # Course name
-            room_name,  # Room name
-            class_section_name  # Class/Section name
-        ))
-        
-def delete_tt_entry():
-    """
-    Delete the selected timetable entry for the current semester and shift.
-    """
-    global timetable_entries
-
-    # Get the current semester and shift
-    current_semester = semester_cb.get().strip()
-    current_shift = shift_cb.get().strip()
-
-    if not current_semester or not current_shift:
-        messagebox.showwarning("Missing Data", "Please select Semester and Shift before deleting an entry.")
-        return
-
-    try:
-        current_semester_val = int(current_semester)
-    except ValueError:
-        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8).")
-        return
-
-    # Get the selected entry in the treeview
-    sel = tt_treeview.focus()
-    if not sel:
-        messagebox.showwarning("Selection Error", "Please select an entry to delete.")
-        return
-
-    # Confirm deletion
-    if not messagebox.askyesno("Confirm", "Are you sure you want to delete this entry?"):
-        return
-
-    # Get the index of the selected entry
-    idx = int(tt_treeview.item(sel)['values'][0]) - 1
-
-    # Check if the selected entry matches the current semester and shift
-    entry = timetable_entries[idx]
-    if entry.get('semester') == current_semester_val and entry.get('shift') == current_shift:
-        # Remove the entry from the database
-        try:
-            conn.execute('''
-                DELETE FROM timetable
-                WHERE teacher_id = ? AND course_id = ? AND room_id = ? AND class_section_id = ? AND semester = ? AND shift = ?
-            ''', (
-                entry['teacher_id'],
-                entry['course_id'],
-                entry['room_id'],
-                entry['class_section_id'],
-                current_semester_val,
-                current_shift
-            ))
-            conn.commit()
-        except sqlite3.Error as e:
-            messagebox.showerror("Database Error", f"Failed to delete entry from the database: {e}")
-            return
-
-        # Remove the entry from the timetable_entries list
-        timetable_entries.pop(idx)
-
-        # Update the treeview
-        update_tt_treeview(current_shift=current_shift, current_semester=current_semester_val)
-        messagebox.showinfo("Success", "Entry deleted successfully.")
-    else:
-        messagebox.showwarning("Mismatch", "The selected entry does not match the current semester and shift.")        
-
-        
-def edit_tt_entry(event):
-    """
-    Edit the selected timetable entry for the current semester and shift.
-    """
-    global editing_index
-    sel = tt_treeview.selection()
-
-    # If no selection, clear the form and reset editing_index
-    if not sel:
-        editing_index = None
-        clear_tt_form()
-        return
-
-    # Get the selected item's values
-    vals = tt_treeview.item(sel[0])['values']
-
-    # Get the current semester and shift
-    current_semester = semester_cb.get().strip()
-    current_shift = shift_cb.get().strip()
-
-    if not current_semester or not current_shift:
-        messagebox.showwarning("Missing Data", "Please select Semester and Shift before editing an entry.")
-        return
-
-    try:
-        current_semester_val = int(current_semester)
-    except ValueError:
-        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8).")
-        return
-
-    # Check if the selected entry matches the current semester and shift
-    if int(vals[1]) != current_semester_val or vals[2] != current_shift:
-        messagebox.showwarning("Mismatch", "The selected entry does not match the current semester and shift.")
-        return
-
-    # Set the editing index and populate the form with selected values
-    editing_index = vals[0] - 1
+    # Clear form and reset states
     clear_tt_form()
-
-    semester_cb.set(vals[1])
-    shift_cb.set(vals[2])
-    tt_teacher_entry.insert(0, vals[3])
-    tt_course_entry.insert(0, vals[4])
-    tt_room_entry.insert(0, vals[5])
-    tt_class_entry.insert(0, vals[6])
+    checked_items.clear()  # Clear checkbox selections
     
-
-def clear_selection(event):
-    """
-    Clear the selection in the treeview if the user clicks on an empty space.
-    """
-    if not tt_treeview.identify_row(event.y):  # Check if the click is not on a row
-        tt_treeview.selection_remove(tt_treeview.selection())  # Deselect all rows
-        clear_tt_form()  # Clear the form
-        global editing_index
-        editing_index = None  # Reset the editing index
+    # Update display
+    update_tt_treeview()
+    messagebox.showinfo("Success", f"Entry {action} successfully.")
+    return True
 
 
-def generate_timetable():
-    if not timetable_entries:
-        messagebox.showwarning("Empty Entries", "Please add timetable entries first")
-        return
+def save_timetable_from_treeview():
+    global timetable_entries # Removed conn from here as it's not passed.
 
-    dialog = tk.Toplevel(root)
-    dialog.title("Timetable Configuration")
-    dialog.geometry("500x450")
-    dialog.resizable(False, False)
-    dialog.grab_set()
-    
-    dialog.update_idletasks()
-    width = dialog.winfo_width()
-    height = dialog.winfo_height()
-    x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-    y = (dialog.winfo_screenheight() // 2) - (height // 2)
-    dialog.geometry(f'+{x}+{y}')
-    
-    main_frame = tk.Frame(dialog, padx=20, pady=20)
-    main_frame.pack(fill="both", expand=True)
-    
-    title_label = tk.Label(main_frame, text="Configure Timetable Generation", font=("Helvetica", 14, "bold"))
-    title_label.pack(anchor="w", pady=(0, 15))
-    
-    form_frame = tk.Frame(main_frame)
-    form_frame.pack(fill="x", expand=True)
-    
-    # current_semester = str(timetable_entries[0]['semester'])
-    current_shift = timetable_entries[0]['shift']
-    
-    tk.Label(form_frame, text="Semesters:", anchor="w").grid(row=0, column=0, sticky="w", pady=5)
-    semester_display = ttk.Combobox(form_frame, values=['1-2'], width=18)
-    semester_display.grid(row=0, column=1, sticky="w", pady=5)
-    semester_display.set("1-2")
-    
-    tk.Label(form_frame, text="Shift:", anchor="w").grid(row=1, column=0, sticky="w", pady=5)
-    shift_display = ttk.Combobox(form_frame, values=["Morning", "Evening"], width=18)
-    shift_display.grid(row=1, column=1, sticky="w", pady=5)
-    shift_display.set("Morning")
-
-    tk.Label(form_frame, text="Lectures per Course:", anchor="w").grid(row=2, column=0, sticky="w", pady=5)
-    lectures_var = tk.StringVar(value="3")
-    lectures_cb = ttk.Combobox(form_frame, values=["1", "2", "3"], textvariable=lectures_var, width=18)
-    lectures_cb.grid(row=2, column=1, sticky="w", pady=5)
-    
-    tk.Label(form_frame, text="Max Lectures per Day:", anchor="w").grid(row=3, column=0, sticky="w", pady=5)
-    max_lectures_var = tk.StringVar(value="4")
-    max_lectures_cb = ttk.Combobox(form_frame, values=["1", "2", "3", "4", "5"], textvariable=max_lectures_var, width=18)
-    max_lectures_cb.grid(row=3, column=1, sticky="w", pady=5)
-    
-    tk.Label(form_frame, text="Lecture Duration (minutes):", anchor="w").grid(row=4, column=0, sticky="w", pady=5)
-    duration_var = tk.StringVar(value="60")
-    duration_cb = ttk.Combobox(form_frame, values=["30", "40", "45", "50", "60", "90", "120"], textvariable=duration_var, width=18)
-    duration_cb.grid(row=4, column=1, sticky="w", pady=5)
-    
-    tk.Label(form_frame, text="Daily Start Time:", anchor="w").grid(row=5, column=0, sticky="w", pady=5)
-    if current_shift == "Morning":
-        default_start = "8:00 AM"
-    else:
-        default_start = "1:00 PM"
-    start_time_var = tk.StringVar(value=default_start)
-    start_time_entry = ttk.Entry(form_frame, textvariable=start_time_var, width=20)
-    start_time_entry.grid(row=5, column=1, sticky="w", pady=5)
-    
-    tk.Label(form_frame, text="Daily End Time:", anchor="w").grid(row=6, column=0, sticky="w", pady=5)
-    if current_shift == "Morning":
-        default_end = "12:00 PM"
-    else:
-        default_end = "4:00 PM"
-    end_time_var = tk.StringVar(value=default_end)
-    end_time_entry = ttk.Entry(form_frame, textvariable=end_time_var, width=20)
-    end_time_entry.grid(row=6, column=1, sticky="w", pady=5)
-    
-    btn_frame = tk.Frame(main_frame)
-    btn_frame.pack(fill="x", expand=True, pady=(20, 0))
-    
-    def validate_and_generate():
-        try:
-            semester_display_value = semester_display.get()
-            if semester_display_value not in ["1-2"]:
-                messagebox.showwarning("Invalid Semester", "Please select a valid semester (1-2)")
-                return
-            shift_display_value = shift_display.get()
-            if shift_display_value not in ["Morning", "Evening"]:
-                messagebox.showwarning("Invalid Shift", "Please select a valid shift (Morning or Evening).")
-                return
-            lectures_per_course = int(lectures_var.get())
-            max_lectures_per_day = int(max_lectures_var.get())
-            lecture_duration = int(duration_var.get())
-
-            try:
-                datetime.strptime(start_time_var.get(), "%I:%M %p")
-                datetime.strptime(end_time_var.get(), "%I:%M %p")
-            except ValueError:
-                messagebox.showwarning("Invalid Time Format", "Please use format HH:MM AM/PM (e.g. 9:00 AM)")
-                return
-
-            dialog.destroy()
-
-            # Call the timetable generation function
-            run_timetable_generation(
-                semester=semester_display_value,
-                shift=shift_display_value,
-                lectures_per_course=lectures_per_course,
-                max_lectures_per_day=max_lectures_per_day,
-                lecture_duration=lecture_duration,
-                start_time=start_time_var.get(),
-                end_time=end_time_var.get()
-            )
-
-        except ValueError as e:
-            messagebox.showwarning("Invalid Input", f"Please enter valid numbers: {str(e)}")
-
-    tk.Button(btn_frame, text="Cancel", command=dialog.destroy,
-              font=("Helvetica", 10, "bold"), bg="#6c757d", fg="white", padx=20, pady=5, borderwidth=0).pack(side="left", padx=5)
-    tk.Button(btn_frame, text="Generate Timetable", command=validate_and_generate,
-              font=("Helvetica", 10, "bold"), bg="#0d6efd", fg="white", padx=20, pady=5, borderwidth=0).pack(side="right", padx=5)
-
-def run_timetable_generation(semester, shift, lectures_per_course, max_lectures_per_day, lecture_duration, start_time, end_time):
-    try:
-        # Determine which semesters to fetch based on the input
-        if semester == "1-2":
-            semesters = [1, 2]
-        elif isinstance(semester, str) and semester.isdigit():
-            semesters = [int(semester)]
-        elif isinstance(semester, int):
-            semesters = [semester]
-        else:
-            semesters = []
-
-        # Fetch timetable entries for the selected semesters and shift
-        timetable_entries = []
-        for sem in semesters:
-            timetable_entries.extend(load_timetable_for_ga(sem, shift))
-
-        if not timetable_entries:
-            messagebox.showwarning("No Data", "No timetable entries found in the database for the selected semester(s) and shift.")
-            return
-
-        # Parse start and end times
-        start_dt = datetime.strptime(start_time, "%I:%M %p")
-        end_dt = datetime.strptime(end_time, "%I:%M %p")
-
-        # Generate time slots based on dialog box constraints
-        selected_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-        time_slots = generate_time_slots(start_dt, end_dt, lecture_duration, selected_days)
-
-        if not time_slots:
-            messagebox.showwarning("Configuration Error", "Could not generate any valid time slots with the given parameters.")
-            return
-
-        # Prepare entries for the genetic algorithm
-        ga_entries = prepare_entries_for_ga(timetable_entries)
-
-        # Run the genetic algorithm
-        ga = TimetableGeneticAlgorithm(
-            ga_entries,
-            lectures_per_course=lectures_per_course,
-            max_lectures_per_day=max_lectures_per_day,
-            lecture_duration=lecture_duration,
-            time_slots=time_slots,
-            population_size=100,
-            max_generations=200,
-            mutation_rate=0.15
-        )
-        
-        optimized = ga.generate_optimized_timetable()
-
-        if optimized is None:
-            messagebox.showwarning("Generation Failed", "Could not generate a valid timetable.")
-            return
-
-        # Display the generated timetable
-        display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift)
-
-    except Exception as ex:
-        messagebox.showerror("Error", f"Failed to generate timetable: {str(ex)}")        
-
-                
-def clear_entries_on_change(event):
-    """
-    Clear all saved timetable entries when semester or shift is changed.
-    """
-    global timetable_entries
-    if timetable_entries:
-        if messagebox.askyesno("Confirm", "Changing Semester or Shift will clear all saved entries. Do you want to proceed?"):
-            timetable_entries.clear()
-            update_tt_treeview()
-        else:
-            # Reset the combobox to its previous value
-            event.widget.set(event.widget.get())  # Keep the current value
-
-def generate_time_slots(start_dt, end_dt, lecture_duration, selected_days, entries=None):
-    """
-    Generate time slots for lectures based on the entries provided.
-    Each slot is exactly 'lecture_duration' minutes.
-    If entries are provided, only generate slots for the days/classes present in entries.
-    """
-    time_slots = []
-
-    total_minutes = ((end_dt.hour * 60 + end_dt.minute) - (start_dt.hour * 60 + start_dt.minute))
-    slot_duration = lecture_duration
-    slots_per_day = total_minutes // slot_duration
-
-    if slots_per_day <= 0:
-        return []
-
-    # If entries are provided, determine which days/classes are needed
-    if entries:
-        # Collect unique days/classes from entries if available
-        # (Assuming entries may have a 'day' or 'class_section_name' field)
-        entry_days = set()
-        for entry in entries:
-            # If your entries have a 'day' field, use it; otherwise, use all selected_days
-            if 'day' in entry:
-                entry_days.add(entry['day'])
-        if entry_days:
-            days_to_use = [day for day in selected_days if day in entry_days]
-        else:
-            days_to_use = selected_days
-    else:
-        days_to_use = selected_days
-
-    for day in days_to_use:
-        current_time = start_dt
-        for _ in range(slots_per_day):
-            end_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) +
-                        timedelta(minutes=slot_duration))
-
-            slot_start = current_time.strftime("%I:%M %p")
-            slot_end = end_time.strftime("%I:%M %p")
-
-            time_slot = f"{day} {slot_start}-{slot_end}"
-            time_slots.append(time_slot)
-
-            # Move to the next slot
-            current_time = (datetime(1, 1, 1, current_time.hour, current_time.minute) +
-                            timedelta(minutes=slot_duration))
-
-    return time_slots
-
-def prepare_entries_for_ga(entries):
-    """
-    Prepare entries for the genetic algorithm.
-    Converts tuples to dicts if necessary.
-    """
-    ga_entries = []
-    for entry in entries:
-        # If entry is a tuple, convert to dict (adjust keys as per your schema)
-        if isinstance(entry, tuple):
-            # Example: adjust these keys to match your tuple structure
-            keys = ['semester', 'shift', 'teacher', 'course', 'room', 'class', 'other_fields']
-            ga_entry = dict(zip(keys, entry))
-        else:
-            ga_entry = entry.copy()
-        ga_entry['time_slot'] = None  # Let the GA assign this
-        ga_entries.append(ga_entry)
-    return ga_entries
-
-
-
-def display_timetable(optimized, time_slots, selected_days, lecture_duration, semester, shift):
-    win = tk.Toplevel(root)
-    win.title(f"Optimized Timetable - Semester {semester} ({shift} Shift)")
-    win.geometry("1000x600")
-    
-    main_frame = tk.Frame(win, padx=20, pady=20)
-    main_frame.pack(fill="both", expand=True)
-    
-    header_frame = tk.Frame(main_frame, bg="#f0f0f0")
-    header_frame.pack(fill="x", pady=(0, 20))
-    
-    tk.Label(header_frame, text=f"Semester {semester} - {shift} Shift", 
-            font=("Helvetica", 14, "bold"), bg="#f0f0f0").pack(pady=10)
-    
-    # Extract days and times from time_slots, preserving order from selected_days
-    days_in_slots = [slot.split()[0] for slot in time_slots]
-    days = [day for day in selected_days if day in days_in_slots]
-    times = sorted({ " ".join(slot.split()[1:]) for slot in time_slots })
-    
-    tree_frame = tk.Frame(main_frame)
-    tree_frame.pack(fill="both", expand=True)
-    
-    columns = ["Time"] + days
-    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=len(times))
-    
-    for col in columns:
-        tree.heading(col, text=col)
-        tree.column(col, width=max(100, len(col) * 15), anchor="center")
-    
-    # Insert empty rows for each time range
-    for time_range in times:
-        tree.insert("", "end", values=[time_range] + ["" for _ in days])
-    
-    # Fill the timetable grid with GA results
-    for (course, class_sec, instance), details in optimized.items():
-        slot = details['time_slot']
-        if not slot:
-            continue
-        day, time_part = slot.split(" ", 1)
-        # Find the row for this time_part
-        row_id = None
-        for item_id in tree.get_children():
-            if tree.item(item_id)["values"][0] == time_part:
-                row_id = item_id
-                break
-        if row_id is None or day not in columns:
-            continue
-        day_idx = columns.index(day)
-        if day_idx == 0:
-            continue  # Never write to the "Time" column!
-        row_values = list(tree.item(row_id)["values"])
-        existing = row_values[day_idx]
-
-        # Use the GA's output keys for display
-        new_entry = (
-            f"{details.get('course', course)}\n"
-            f"{details.get('class', class_sec)}\n"
-            f"{details.get('teacher', '')}\n"
-            f"Room: {details.get('room', '')}"
-        )
-        print(f"Placing in cell [Day: {day}, Time: {time_part}]:\n{new_entry}\n")
-
-        # Append instead of overwrite, avoid duplicates
-        if existing and existing.strip():
-            if new_entry not in existing:
-                row_values[day_idx] = existing + "\n---\n" + new_entry
-        else:
-            row_values[day_idx] = new_entry
-        tree.item(row_id, values=row_values)
-    
-    vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-    tree.configure(yscrollcommand=vsb.set)
-    vsb.pack(side="right", fill="y")
-    tree.pack(fill="both", expand=True)
-    
-    btn_frame = tk.Frame(main_frame, pady=10)
-    btn_frame.pack(fill="x")
-    
-    tk.Button(btn_frame, text="Close", command=win.destroy, 
-             bg="#f0f0f0", padx=20, pady=5).pack(side="right", padx=5)
-    
-    tk.Button(btn_frame, text="Export to PDF", command=lambda: messagebox.showinfo("Export", 
-                "PDF export functionality could be implemented here"),
-             bg="#0d6efd", fg="white", padx=20, pady=5).pack(side="right", padx=5)
-        
-        
-    
-def save_to_db_ui():
-    """
-    Save only the current shift's timetable entries to the database.
-    """
-    global timetable_entries
-
-    # Get the current shift
+    current_semester_label = tt_semester_entry.get().strip()
     current_shift = shift_cb.get().strip()
 
     if not current_shift:
-        messagebox.showwarning("Missing Data", "Please select a Shift before saving.")
+        messagebox.showwarning("Missing Data", "Please select Shift to define the context for saving.")
         return
 
-    # Filter entries for the current shift
-    shift_entries = [entry for entry in timetable_entries if entry.get('shift') == current_shift]
+    entries_to_save = [
+        entry for entry in timetable_entries
+        if entry["shift"] == current_shift and \
+           (not current_semester_label or entry["semester"] == current_semester_label)
+    ]
 
-    if not shift_entries:
-        messagebox.showwarning("Empty", f"No entries found for the {current_shift} shift to save.")
+    context_msg = f"Shift: {current_shift}"
+    if current_semester_label:
+        context_msg += f", Label: {current_semester_label}"
+
+    if not entries_to_save:
+        messagebox.showinfo("No Data", f"No entries found in the current view for {context_msg} to save to DB.")
         return
 
-    # Save the filtered entries to the database
-    save_timetable_from_treeview()
-    
-    
-def load_from_db_ui():
-    """
-    Load timetable entries from the database for the selected semester and shift.
-    """
-    global timetable_entries
+    if not messagebox.askyesno("Confirm Save", f"Save {len(entries_to_save)} entries for {context_msg} to the database?"):
+        return
 
-    # Confirm with the user before loading
-    if not messagebox.askyesno("Confirm", "Load data from database? This will replace current entries."):
+    saved_count = 0
+    failed_count = 0
+    
+    with conn: # This uses the 'conn' from timetable_ui.py's global scope
+        for entry in entries_to_save:
+            try:
+                # MODIFICATION: Removed 'conn' argument from calls to fetch_id_from_name
+                teacher_id = fetch_id_from_name("teachers", entry["teacher_name"])
+                course_id = fetch_id_from_name("courses", entry["course_name"],
+                                               teacher_id=teacher_id,
+                                               code=entry["course_code"],
+                                               indicators=entry["course_indicators"])
+                room_id = fetch_id_from_name("rooms", entry["room_name"])
+                class_section_id = fetch_id_from_name("class_sections", entry["class_section_name"],
+                                                     semester=entry["semester"], shift=entry["shift"])
+
+                if not all([teacher_id, course_id, room_id, class_section_id]):
+                    messagebox.showerror("Error", f"Could not resolve IDs for entry: {entry['course_name']}. Skipping.")
+                    failed_count +=1
+                    continue
+
+                cur = conn.cursor() # Using timetable_ui.py's conn for this check
+                cur.execute('''SELECT id FROM timetable WHERE
+                               teacher_id = ? AND course_id = ? AND room_id = ? AND
+                               class_section_id = ? AND semester = ? AND shift = ?''',
+                            (teacher_id, course_id, room_id, class_section_id, entry["semester"], entry["shift"]))
+                if cur.fetchone():
+                    print(f"Entry for {entry['course_name']} already exists in DB. Skipping.")
+                    failed_count +=1
+                    continue
+
+                # Using timetable_ui.py's conn for insert
+                conn.execute('''
+                    INSERT INTO timetable (teacher_id, course_id, room_id, class_section_id, semester, shift)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (teacher_id, course_id, room_id, class_section_id, entry["semester"], entry["shift"]))
+                saved_count += 1
+            except sqlite3.Error as e: # This will catch errors from operations using timetable_ui.py's conn
+                messagebox.showerror("Database Error", f"Error saving entry {entry['course_name']}: {e}")
+                failed_count +=1
+            except Exception as e: # This will catch errors from fetch_id_from_name if they propagate
+                messagebox.showerror("Unexpected Error", f"Error processing entry {entry['course_name']}: {e}")
+                failed_count +=1
+
+    if saved_count > 0:
+        conn.commit() # Commit changes made via timetable_ui.py's conn
+        messagebox.showinfo("Success", f"{saved_count} entries saved to database for {context_msg}.")
+    if failed_count > 0:
+        messagebox.showwarning("Save Incomplete", f"{failed_count} entries could not be saved or were duplicates.")
+    if saved_count == 0 and failed_count == 0 :
+        messagebox.showinfo("No Action", "No new entries to save to the database for the current view.")
+
+
+def clear_tt_form():
+    tt_teacher_entry.delete(0, tk.END)
+    tt_course_entry.delete(0, tk.END)
+    tt_course_code_entry.delete(0, tk.END)
+    tt_indicators_entry.delete(0, tk.END)
+    tt_room_entry.delete(0, tk.END)
+    tt_class_entry.delete(0, tk.END)
+    tt_semester_entry.delete(0, tk.END)
+    global editing_index
+    editing_index = None
+
+def on_treeview_click(event):
+    global checked_items
+    
+    region = tt_treeview.identify("region", event.x, event.y)
+    if region == "cell":
+        row_id = tt_treeview.identify_row(event.y)
+        col = tt_treeview.identify_column(event.x)
+        
+        if col == "#1" and row_id:  # "Select" column
+            try:
+                # Convert row_id to integer (display index)
+                display_idx = int(row_id)
+                
+                # Toggle checkbox state
+                checked_items[display_idx] = not checked_items.get(display_idx, False)
+                
+                # If we're checking this item, uncheck all others (single selection)
+                if checked_items[display_idx]:
+                    for key in list(checked_items.keys()):
+                        if key != display_idx:
+                            checked_items[key] = False
+                
+                update_tt_treeview()
+                
+            except (ValueError, IndexError):
+                print(f"Error handling click on row_id: {row_id}")
+
+def on_room_filter_change(event=None):
+    update_tt_treeview()
+
+def update_tt_treeview():
+    global timetable_entries, tt_treeview, checked_items
+    
+    # Clear existing items
+    for item in tt_treeview.get_children():
+        tt_treeview.delete(item)
+
+    current_semester_label = tt_semester_entry.get().strip()
+    current_shift = shift_cb.get().strip()
+    current_room = tt_room_entry.get().strip()  # Get current room filter
+
+    # Filter entries for display
+    display_entries = []
+    if current_shift:
+        for e in timetable_entries:
+            if e.get('shift') == current_shift and \
+               (not current_semester_label or e.get('semester') == current_semester_label) and \
+               (not current_room or str(e.get('room_name', '')).strip() == current_room):  # Add room filter
+                display_entries.append(e)
+
+    # Clean up checked_items to only include valid indices
+    max_display_idx = len(display_entries) - 1
+    checked_items = {k: v for k, v in checked_items.items() if k <= max_display_idx}
+
+    # Insert filtered entries into treeview
+    for i, entry in enumerate(display_entries):
+        checked = checked_items.get(i, False)
+        checkbox = "☑" if checked else "☐"
+        values_to_insert = (
+            checkbox,
+            i + 1,
+            entry.get('semester', ''),
+            entry.get('shift', ''),
+            entry.get('class_section_name', 'N/A'),
+            entry.get('teacher_name', 'N/A'),
+            entry.get('course_name', 'N/A'),
+            entry.get('course_code', 'N/A'),
+            entry.get('course_indicators', ''),
+            entry.get('room_name', 'N/A')
+        )
+        tt_treeview.insert('', 'end', values=values_to_insert, iid=str(i))
+
+def delete_tt_entry():
+    global timetable_entries, editing_index, checked_items
+    
+    # Get selected items from checkbox
+    selected = [idx for idx, checked in checked_items.items() if checked]
+    
+    if not selected:
+        messagebox.showwarning("Selection Error", "Please select an entry to delete using the checkbox.")
+        return False
+    
+    if len(selected) > 1:
+        messagebox.showwarning("Multiple Selection", "Please select only one entry to delete.")
+        return False
+        
+    display_idx = selected[0]
+    
+    # Convert display index to actual timetable_entries index
+    current_semester_label = tt_semester_entry.get().strip()
+    current_shift = shift_cb.get().strip()
+    
+    if not current_shift:
+        messagebox.showwarning("Missing Context", "Please select a shift first.")
+        return False
+    
+    # Get filtered entries and their actual indices
+    display_entries = []
+    actual_indices = []
+    for i, entry in enumerate(timetable_entries):
+        if (entry.get('shift') == current_shift and 
+            (not current_semester_label or entry.get('semester') == current_semester_label)):
+            display_entries.append(entry)
+            actual_indices.append(i)
+    
+    if 0 <= display_idx < len(display_entries):
+        actual_idx = actual_indices[display_idx]
+        
+        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this entry?"):
+            entry = timetable_entries[actual_idx]
+            
+            # Delete from database if entry has an ID
+            if 'entry_id' in entry:
+                from db.timetable_db import delete_timetable_entry_from_db
+                if delete_timetable_entry_from_db(entry['entry_id']):
+                    print(f"Entry {entry['entry_id']} deleted from database")
+                else:
+                    print(f"Warning: Could not delete entry {entry['entry_id']} from database")
+            
+            # Remove from local list
+            timetable_entries.pop(actual_idx)
+            
+            # Update editing_index if necessary
+            if editing_index is not None:
+                if editing_index == actual_idx:
+                    editing_index = None
+                    clear_tt_form()
+                elif editing_index > actual_idx:
+                    editing_index -= 1
+            
+            # Clear checkbox selections and update display
+            checked_items.clear()
+            update_tt_treeview()
+            messagebox.showinfo("Success", "Entry deleted successfully.")
+            return True
+    else:
+        messagebox.showerror("Error", "Invalid selection index.")
+    
+    return False
+
+
+def edit_tt_entry(event):
+    global editing_index
+    
+    selected_items = tt_treeview.selection()
+    if not selected_items:
         return
     
-    # Get the selected semester and shift
-    semester = semester_cb.get().strip()
-    shift = shift_cb.get().strip()
+    try:
+        selected_iid = selected_items[0]
+        index = int(selected_iid)
+        
+        if 0 <= index < len(timetable_entries):
+            editing_index = index
+            entry_to_edit = timetable_entries[index]
+            
+            # Clear and populate form
+            clear_tt_form()
+            
+            # Update form fields
+            tt_semester_entry.insert(0, entry_to_edit.get('semester', ''))
+            shift_cb.set(entry_to_edit.get('shift', 'Morning'))
+            tt_class_entry.insert(0, entry_to_edit.get('class_section_name', ''))
+            tt_teacher_entry.insert(0, entry_to_edit.get('teacher_name', ''))
+            tt_course_entry.insert(0, entry_to_edit.get('course_name', ''))
+            tt_course_code_entry.insert(0, entry_to_edit.get('course_code', ''))
+            tt_indicators_entry.insert(0, entry_to_edit.get('course_indicators', ''))
+            tt_room_entry.insert(0, str(entry_to_edit.get('room_name', '')))
+            
+            # Ensure editing_index is set
+            editing_index = index
+            
+    except (ValueError, IndexError):
+        messagebox.showerror("Error", "Invalid selection index.")
+        clear_tt_form()
+        editing_index = None
+
+
+def clear_selection_if_outside_tree(event):
+    widget = event.widget
+    if widget == tt_treeview:
+        return
+        
+    # Check if click is in an entry widget or combobox
+    interactive_widgets = [
+        tt_teacher_entry, tt_course_entry, tt_course_code_entry, 
+        tt_indicators_entry, tt_room_entry, tt_class_entry, 
+        tt_semester_entry, shift_cb
+    ]
     
-    if not semester or not shift:
-        messagebox.showwarning("Missing Data", "Please select Semester and Shift before loading.")
+    if widget in interactive_widgets or widget.winfo_parent() in [w.winfo_parent() for w in interactive_widgets]:
+        return
+        
+    # Clear selection and form if click is outside
+    tt_treeview.selection_remove(tt_treeview.selection())
+    clear_tt_form()
+
+
+def clear_selection(event):
+    if not tt_treeview.identify_row(event.y):
+        if tt_treeview.selection():
+            tt_treeview.selection_remove(tt_treeview.selection())
+            clear_tt_form()
+            global editing_index, checked_items
+            editing_index = None
+            checked_items.clear()
+            update_tt_treeview()
+
+
+def generate_timetable_dialog():
+    global college_name_var, timetable_title_var, effective_date_var, department_name_var
+
+    dialog = tk.Toplevel(root)
+    dialog.title("Configure Timetable Generation")
+    dialog.geometry("800x700")
+    dialog.resizable(False, False)
+
+    dialog.update_idletasks()
+    x = (root.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+    y = (root.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+    dialog.geometry(f'+{x}+{y}')
+
+    main_frame = tk.Frame(dialog, padx=20, pady=20)
+    main_frame.pack(fill="both", expand=True)
+
+    tk.Label(main_frame, text="Timetable Metadata", font=("Helvetica", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,10))
+
+    tk.Label(main_frame, text="College Name:").grid(row=1, column=0, sticky="w", pady=2)
+    tk.Entry(main_frame, textvariable=college_name_var, width=60).grid(row=1, column=1, sticky="ew", pady=2)
+
+    tk.Label(main_frame, text="Timetable Title:").grid(row=2, column=0, sticky="w", pady=2)
+    tk.Entry(main_frame, textvariable=timetable_title_var, width=60).grid(row=2, column=1, sticky="ew", pady=2)
+
+    tk.Label(main_frame, text="Effective Date (DD-MM-YYYY):").grid(row=3, column=0, sticky="w", pady=2)
+    tk.Entry(main_frame, textvariable=effective_date_var, width=20).grid(row=3, column=1, sticky="w", pady=2)
+
+    tk.Label(main_frame, text="Department Name:").grid(row=4, column=0, sticky="w", pady=2)
+    tk.Entry(main_frame, textvariable=department_name_var, width=60).grid(row=4, column=1, sticky="ew", pady=2)
+
+    ttk.Separator(main_frame, orient='horizontal').grid(row=5, column=0, columnspan=2, sticky='ew', pady=10)
+
+    tk.Label(main_frame, text="Generation Parameters", font=("Helvetica", 12, "bold")).grid(row=6, column=0, columnspan=2, sticky="w", pady=(0,10))
+
+    tk.Label(main_frame, text="Shift:", anchor="w").grid(row=7, column=0, sticky="w", pady=5)
+    shift_options = ["Morning", "Evening"]
+    shift_dialog_var = tk.StringVar(value=shift_cb.get())
+    shift_dialog_cb = ttk.Combobox(main_frame, values=shift_options, textvariable=shift_dialog_var, width=18, state="readonly")
+    shift_dialog_cb.grid(row=7, column=1, sticky="w", pady=5)
+
+    tk.Label(main_frame, text="Lectures per Course:").grid(row=9, column=0, sticky="w", pady=5)
+    lectures_var = tk.StringVar(value="3")
+    lectures_cb = ttk.Combobox(main_frame, values=["1", "2", "3", "4"], textvariable=lectures_var, width=18, state="readonly")
+    lectures_cb.grid(row=9, column=1, sticky="w", pady=5)
+
+    tk.Label(main_frame, text="Lecture Duration (minutes):").grid(row=10, column=0, sticky="w", pady=5)
+    duration_var = tk.StringVar(value="60")
+    duration_cb = ttk.Combobox(main_frame, values=["45", "50", "55", "60", "90", "120"], textvariable=duration_var, width=18, state="readonly")
+    duration_cb.grid(row=10, column=1, sticky="w", pady=5)
+
+    tk.Label(main_frame, text="Daily Start Time:").grid(row=11, column=0, sticky="w", pady=5)
+    start_time_dialog_var = tk.StringVar(value="01:00 PM" if shift_dialog_var.get() == "Evening" else "08:00 AM")
+    start_time_entry = ttk.Entry(main_frame, textvariable=start_time_dialog_var, width=20)
+    start_time_entry.grid(row=11, column=1, sticky="w", pady=5)
+
+    tk.Label(main_frame, text="Daily End Time:").grid(row=12, column=0, sticky="w", pady=5)
+    end_time_dialog_var = tk.StringVar(value="06:00 PM" if shift_dialog_var.get() == "Evening" else "01:00 PM")
+    end_time_entry = ttk.Entry(main_frame, textvariable=end_time_dialog_var, width=20)
+    end_time_entry.grid(row=12, column=1, sticky="w", pady=5)
+
+    tk.Label(main_frame, text="Days:").grid(row=13, column=0, sticky="w", pady=5)
+    days_frame = tk.Frame(main_frame)
+    days_frame.grid(row=13, column=1, sticky="w")
+    day_vars = {}
+    days_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    for i, day_text in enumerate(days_options):
+        var = tk.BooleanVar(value=True if day_text != "Saturday" else False)
+        cb_day = ttk.Checkbutton(days_frame, text=day_text, variable=var)
+        cb_day.pack(side="left", padx=2)
+        day_vars[day_text] = var
+
+    # --- Fetch all courses from the database for dropdown ---
+    from db.timetable_db import conn as db_conn
+    cur = db_conn.cursor()
+    cur.execute("SELECT code, name FROM courses")
+    course_list = cur.fetchall()
+    course_options = [f"{code} - {name}" for code, name in course_list]
+
+    # Add a frame for course-specific exceptions
+    tk.Label(main_frame, text="Course Exceptions", font=("Helvetica", 12, "bold")).grid(row=15, column=0, columnspan=2, sticky="w", pady=(10,5))
+    
+    exceptions_frame = ttk.LabelFrame(main_frame, text="Course-specific lecture frequencies")
+    exceptions_frame.grid(row=16, column=0, columnspan=2, sticky="ew", pady=5)
+
+    # Create a treeview for exceptions
+    columns = ("Course Code", "Course Name", "Lectures/Week")
+    exceptions_tree = ttk.Treeview(exceptions_frame, columns=columns, show="headings", height=5)
+    for col in columns:
+        exceptions_tree.heading(col, text=col)
+        exceptions_tree.column(col, width=150)
+    exceptions_tree.grid(row=0, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
+
+    # Add scrollbar
+    scrollbar = ttk.Scrollbar(exceptions_frame, orient="vertical", command=exceptions_tree.yview)
+    scrollbar.grid(row=0, column=2, sticky="ns")
+    exceptions_tree.configure(yscrollcommand=scrollbar.set)
+
+    # Entry fields for adding exceptions
+    entry_frame = ttk.Frame(exceptions_frame)
+    entry_frame.grid(row=1, column=0, columnspan=3, pady=5)
+
+    # --- Use Combobox for course selection ---
+    selected_course_var = tk.StringVar()
+    freq_var = tk.StringVar(value="1")
+
+    course_cb = ttk.Combobox(entry_frame, textvariable=selected_course_var, values=course_options, width=35, state="readonly")
+    course_cb.grid(row=0, column=0, padx=5)
+    ttk.Combobox(entry_frame, textvariable=freq_var, values=["1", "2", "3", "4"], width=5).grid(row=0, column=1, padx=5)
+
+    def add_exception():
+        course_str = selected_course_var.get()
+        freq = freq_var.get()
+        if course_str:
+            code, name = course_str.split(" - ", 1)
+            exceptions_tree.insert("", "end", values=(code, name, freq))
+            selected_course_var.set("")
+            freq_var.set("1")
+
+    def remove_exception():
+        selected = exceptions_tree.selection()
+        if selected:
+            exceptions_tree.delete(selected[0])
+
+    ttk.Button(entry_frame, text="Add", command=add_exception).grid(row=0, column=2, padx=5)
+    ttk.Button(entry_frame, text="Remove", command=remove_exception).grid(row=0, column=3, padx=5)
+
+    dialog_btn_frame = tk.Frame(main_frame)
+    dialog_btn_frame.grid(row=17, column=0, columnspan=2, pady=20)
+
+    def validate_and_run_generation():
+        try:
+            meta = {
+                "college_name": college_name_var.get(),
+                "timetable_title": timetable_title_var.get(),
+                "effective_date": effective_date_var.get(),
+                "department_name": department_name_var.get()
+            }
+
+            gen_shift = shift_dialog_var.get()
+            lectures_p_course = int(lectures_var.get())
+            lecture_dur = int(duration_var.get())
+            start_t_str = start_time_dialog_var.get()
+            end_t_str = end_time_dialog_var.get()
+
+            selected_days = [day for day, var in day_vars.items() if var.get()]
+            if not selected_days:
+                messagebox.showwarning("No Days Selected", "Please select at least one day for the timetable.")
+                return
+
+            if not validate_time_format(start_t_str) or not validate_time_format(end_t_str):
+                messagebox.showerror("Invalid Time", "Please enter time in format HH:MM AM/PM (e.g., 07:30 AM)")
+                return
+
+            # Collect exceptions
+            exceptions = {}
+            for item in exceptions_tree.get_children():
+                values = exceptions_tree.item(item)["values"]
+                exceptions[values[0]] = int(values[2])  # Map course code to frequency
+
+            run_timetable_generation(
+                shift=gen_shift,
+                lectures_per_course=lectures_p_course,
+                lecture_duration=lecture_dur,
+                start_time=start_t_str,
+                end_time=end_t_str,
+                days=selected_days,
+                timetable_metadata=meta,
+                course_exceptions=exceptions
+            )
+            # dialog.destroy()  # Close the dialog after successful generation
+        except ValueError as e:
+            messagebox.showerror("Invalid Input", f"Please check your input values: {e}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
+            import traceback
+            traceback.print_exc()
+
+    tk.Button(dialog_btn_frame, text="Cancel", command=dialog.destroy, width=10).pack(side="left", padx=10)
+    tk.Button(dialog_btn_frame, text="Generate", command=validate_and_run_generation, width=10, bg="#007bff", fg="white").pack(side="right", padx=10)
+
+
+def run_timetable_generation(shift, lectures_per_course, lecture_duration, start_time, 
+                           end_time, days, timetable_metadata, course_exceptions=None):
+    try:
+        print(f"Loading GA data for Shift: {shift}")
+        db_rows_for_ga = load_timetable_for_ga(shift=shift)
+
+        if not db_rows_for_ga:
+            messagebox.showwarning("No Data for GA", f"No timetable entries found in the database for Shift: {shift} to generate a timetable.")
+            return
+
+        ga_entries = [
+            {
+                "course_name": r["course_name"],
+                "course_code": r["course_code"],
+                "course_indicators": r.get("course_indicators", ""),
+                "class_section": r["class_section_name"],
+                "room": str(r["room_name"]),
+                "teacher": r["teacher_name"],
+                "semester": r["semester"]
+            }
+            for r in db_rows_for_ga
+        ]
+
+        if not ga_entries:
+            messagebox.showwarning("Processing Error", "Failed to prepare entries for the Genetic Algorithm.")
+            return
+
+        time_slots = generate_time_slots(days, start_time, end_time, lecture_duration, break_duration=10)
+        print("Generated UI time slots for GA:", len(time_slots))
+
+        if not time_slots:
+            messagebox.showwarning("Configuration Error", "Could not generate any valid time slots. Check start/end times and duration.")
+            return
+
+        ga = TimetableGeneticAlgorithm(
+            entries=ga_entries,
+            time_slots_input=time_slots,
+            lectures_per_course=lectures_per_course,
+            course_exceptions=course_exceptions,
+            population_size=100,
+            max_generations=100,
+            mutation_rate=0.15
+        )
+
+        optimized_schedule, best_fitness = ga.evolve()
+
+        print(f"Debug: GA returned optimized schedule with fitness: {best_fitness}")
+        print(f"Debug: Optimized schedule contains {len(optimized_schedule or {})} lecture entries")
+
+        if optimized_schedule is None or not optimized_schedule:
+            messagebox.showwarning("Generation Failed", "The genetic algorithm could not generate a valid timetable with the given constraints and data.")
+            return
+
+        # The rest of your function using 'optimized_schedule'
+        display_title = f"{timetable_metadata['timetable_title']} - {shift} Shift"
+        display_timetable(optimized_schedule, time_slots, days, timetable_metadata, display_title)
+
+    except Exception as ex:
+        messagebox.showerror("Timetable Generation Error", f"Failed to generate timetable: {ex}")
+        import traceback
+        traceback.print_exc()
+
+
+def clear_entries_on_change(event, changed_field):
+    global editing_index, checked_items
+    editing_index = None
+    checked_items.clear()
+    update_tt_treeview()
+
+
+def display_timetable(optimized_timetable_data, available_time_slots,
+                      scheduled_days, timetable_metadata, display_title):
+    win = tk.Toplevel(root)
+    win.title(display_title)
+    win.geometry("1400x900")
+    win.state('zoomed')
+
+    # Create main container frame
+    main_container = tk.Frame(win)
+    main_container.pack(fill="both", expand=True)
+
+    # Metadata frame at top
+    meta_frame = tk.Frame(main_container, pady=10)
+    meta_frame.pack(fill="x")
+
+    # Metadata display
+    tk.Label(meta_frame, text=timetable_metadata.get("college_name", "College Name N/A"), 
+            font=("Helvetica", 16, "bold")).pack()
+    tk.Label(meta_frame, text=timetable_metadata.get("timetable_title", "Timetable"), 
+            font=("Helvetica", 14)).pack()
+    tk.Label(meta_frame, text=f"Effective Date: {timetable_metadata.get('effective_date', 'N/A')}", 
+            font=("Helvetica", 10)).pack()
+    tk.Label(meta_frame, text=f"Department: {timetable_metadata.get('department_name', 'N/A')}", 
+            font=("Helvetica", 10, "italic")).pack()
+    
+    # Add separator
+    ttk.Separator(main_container, orient='horizontal').pack(fill='x', padx=20, pady=5)
+
+    # Add export buttons at the top
+    export_btn_frame = tk.Frame(main_container, pady=10)
+    export_btn_frame.pack(fill="x", padx=20)
+
+    # Group data by class and semester first for export
+    class_sem_groups = {}
+    for key_tuple, details in optimized_timetable_data.items():
+        class_sec = key_tuple[1]
+        semester = details.get('semester', 'N/A')
+        group_key = (semester, class_sec)
+        if group_key not in class_sem_groups:
+            class_sem_groups[group_key] = {}
+        day, time = details['time_slot'].split(" ", 1)
+        if time not in class_sem_groups[group_key]:
+            class_sem_groups[group_key][time] = {}
+        if day not in class_sem_groups[group_key][time]:
+            class_sem_groups[group_key][time][day] = []
+        lecture_info = (f"{details['course_name']} ({details.get('course_code', 'N/A')})\n"
+                        f"{details.get('course_indicators', '')}\n"
+                        f"{details['teacher']}\nR: {details['room']}")
+        class_sem_groups[group_key][time][day].append(lecture_info)
+
+    tk.Button(export_btn_frame, text="Export to PDF",
+             command=lambda: export_to_pdf(optimized_timetable_data, available_time_slots, 
+                                         class_sem_groups, timetable_metadata, display_title),
+             bg="#dc3545", fg="white", padx=15, pady=5, 
+             font=('Helvetica', 10)).pack(side="left", padx=10)
+
+    tk.Button(export_btn_frame, text="Close", command=win.destroy,
+             bg="#6c757d", fg="white", padx=15, pady=5, 
+             font=('Helvetica', 10)).pack(side="right", padx=10)
+
+    # Add notebook for timetable display
+    notebook = ttk.Notebook(main_container)
+    notebook.pack(fill="both", expand=True, padx=10, pady=5)
+
+    # Get unique time slots (without day prefix)
+    time_slots = sorted(list(set(slot.split(" ", 1)[1] for slot in available_time_slots)))
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+    # Create a tab for each class-semester combination
+    for (semester, section), data in class_sem_groups.items():
+        tab_frame = ttk.Frame(notebook)
+        notebook.add(tab_frame, text=f"{section} - {semester}")
+
+        # Columns: Time, Monday, Tuesday, ...
+        tree_columns = ["Time"] + days
+        tree = ttk.Treeview(tab_frame, columns=tree_columns, show="headings", style="Timetable.Treeview")
+
+        # Configure style
+        style = ttk.Style()
+        style.configure("Timetable.Treeview", rowheight=100)
+        style.configure("Timetable.Treeview.Heading", font=('Helvetica', 9, 'bold'))
+
+        # Configure columns
+        tree.column("Time", width=120, anchor='center', stretch=tk.NO)
+        tree.heading("Time", text="Time")
+        for day in days:
+            tree.column(day, width=200, anchor='center')
+            tree.heading(day, text=day)
+
+        # Add data rows: each row is a time slot, columns are days
+        for ts in time_slots:
+            row_data = [ts]
+            for day in days:
+                cell_content = "\n\n".join(data.get(ts, {}).get(day, []))
+                row_data.append(cell_content)
+            tree.insert("", "end", values=row_data)
+
+        # Add scrollbars
+        vsb = ttk.Scrollbar(tab_frame, orient="vertical", command=tree.yview)
+        hsb = ttk.Scrollbar(tab_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        # Grid layout
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
+        # Configure grid weights
+        tab_frame.grid_rowconfigure(0, weight=1)
+        tab_frame.grid_columnconfigure(0, weight=1)
+
+
+def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_data, metadata, title):
+    if not REPORTLAB_AVAILABLE:
+        messagebox.showerror("Missing Library", "ReportLab library is not installed.")
+        return
+
+    filepath = filedialog.asksaveasfilename(
+        defaultextension=".pdf",
+        filetypes=[("PDF files", "*.pdf")],
+        title="Save Timetable as PDF"
+    )
+    if not filepath: 
         return
 
     try:
-        semester_val = int(semester)
-    except ValueError:
-        messagebox.showwarning("Invalid Semester", "Semester must be a number (1-8).")
+        doc = SimpleDocTemplate(filepath, pagesize=(30*inch, 20*inch), rightMargin=2*inch)
+        story = []
+        styles = getSampleStyleSheet()
+
+        # Header info
+        styles['h1'].alignment = 1
+        story.append(Paragraph(metadata.get("college_name", ""), styles['h1']))
+        story.append(Paragraph(title, styles['h2']))
+        story.append(Spacer(1, 0.2*inch))
+
+        for class_key in grouped_display_data.keys():
+            semester, section = class_key
+
+            # Determine the specific room for this class/section
+            room_for_this_section = "N/A"
+            for lecture_details in optimized_timetable_data.values():
+                if lecture_details['class_section'] == section and lecture_details['semester'] == semester:
+                    room_for_this_section = str(lecture_details['room'])
+                    break
+            
+            # Add class header
+            class_header = f"{semester} {section} Room: {room_for_this_section}"
+            story.append(Paragraph(class_header, styles['Heading2']))
+            story.append(Spacer(1, 0.1*inch))
+
+            # Get unique time slots and days
+            time_slots = sorted(list(set(slot.split(" ", 1)[1] for slot in time_slots_cols)))
+            days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+            # Prepare table data
+            table_data = []
+            header_row = ["Time"] + days
+            table_data.append(header_row)
+
+            # Simply display the data as generated by GA
+            for time_slot in time_slots:
+                row = [time_slot]
+                for day in days:
+                    cell_content = ""
+                    full_slot = f"{day} {time_slot}"
+                    
+                    for key, details in optimized_timetable_data.items():
+                        if (details['time_slot'] == full_slot and 
+                            details['class_section'] == section and 
+                            details['semester'] == semester):
+                            cell_content = (f"{details['course_name']}\n"
+                                          f"({details['course_code']})\n"
+                                          f"{details.get('course_indicators', '')}\n"
+                                          f"{details['teacher']}")
+                    row.append(cell_content)
+                table_data.append(row)
+
+            # Create and style the table
+            col_widths = [2*inch] + [3*inch] * len(days)
+            table = Table(table_data, colWidths=col_widths, rowHeights=[0.4*inch] + [1.2*inch] * len(time_slots))
+            
+            # Enhanced table styling
+            style = TableStyle([
+                ('GRID', (0,0), (-1,-1), 1, reportlab_colors.black),
+                ('BOX', (0,0), (-1,-1), 2, reportlab_colors.black),
+                ('BACKGROUND', (0,0), (-1,0), reportlab_colors.HexColor('#0d6efd')),
+                ('TEXTCOLOR', (0,0), (-1,0), reportlab_colors.whitesmoke),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,0), 12),
+                ('FONTSIZE', (0,1), (-1,-1), 10),
+                ('LEADING', (0,0), (-1,-1), 14),
+                ('TOPPADDING', (0,0), (-1,-1), 5),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ])
+            table.setStyle(style)
+            story.append(table)
+            story.append(Spacer(1, 0.5*inch))
+
+        doc.build(story)
+        messagebox.showinfo("Success", f"Timetable exported to {filepath}")
+
+    except Exception as e:
+        messagebox.showerror("Export Failed", f"Could not export to PDF: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def save_to_db_ui():
+    save_timetable_from_treeview()
+
+
+def load_from_db_ui():
+    global timetable_entries, checked_items
+
+    current_shift = shift_cb.get().strip()
+    current_semester_label = tt_semester_entry.get().strip()
+
+    if not current_shift:
+        messagebox.showwarning("Missing Context", "Please select Shift to load data for.")
         return
 
-    # Debug: Print semester and shift
-    # print("Loading data for Semester:", semester_val, "Shift:", shift)
+    confirm_msg = "Loading from database will update the current list. Entries matching the current Shift"
+    if current_semester_label:
+        confirm_msg += f" and Label '{current_semester_label}'"
+    else:
+        confirm_msg += " (any Label)"
+    confirm_msg += " will be replaced if they exist in the database. Proceed?"
+
+    if not messagebox.askyesno("Confirm Load", confirm_msg):
+        return
     
-    # Load data from the database
-    timetable_entries = load_timetable(semester_val, shift)
-    
-    # Debug: Print loaded entries
-    # print("Loaded entries:", timetable_entries)
-    
-    # Update the treeview with the loaded entries
+    label_to_load = current_semester_label if current_semester_label else None
+
+    print(f"Loading entries from DB for Shift: {current_shift}, Label: '{label_to_load if label_to_load else 'Any'}'")
+    # loaded_db_entries should come from timetable_db.load_timetable
+    loaded_db_entries = load_timetable(shift=current_shift, semester_label=label_to_load)
+
+    temp_entries = [
+        e for e in timetable_entries
+        if not (
+            e.get('shift') == current_shift and
+            (label_to_load is None or e.get('semester') == label_to_load)
+        )
+    ]
+    timetable_entries = temp_entries + loaded_db_entries
+
+    # Clear checkbox selections after loading
+    checked_items.clear()
     update_tt_treeview()
-    messagebox.showinfo("Success", f"{len(timetable_entries)} entries loaded from database.")
-    
-        
+    messagebox.showinfo("Load Complete", f"{len(loaded_db_entries)} entries loaded from database for Shift: {current_shift} (Label: '{label_to_load if label_to_load else 'Any'}') and updated in list.")
+
+
 def show():
-    TT_header_frame.pack(fill="x")
-    TT_frame.pack(fill="both", expand=True)
+    if TT_header_frame: 
+        TT_header_frame.pack(fill="x")
+    if TT_frame: 
+        TT_frame.pack(fill="both", expand=True)
+    update_tt_treeview()
 
 
 def hide():
-    TT_header_frame.pack_forget()
-    TT_frame.pack_forget()
+    if TT_header_frame: 
+        TT_header_frame.pack_forget()
+    if TT_frame: 
+        TT_frame.pack_forget()

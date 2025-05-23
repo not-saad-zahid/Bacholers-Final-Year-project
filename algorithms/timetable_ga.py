@@ -1,340 +1,934 @@
 """
-Genetic algorithm for generating class timetables with improved distribution of lectures.
+Genetic algorithm for generating class timetables with improved handling of teacher conflicts.
 """
 import random
 from datetime import datetime, timedelta
+from tkinter import messagebox
 
 class TimetableGeneticAlgorithm:
-    def __init__(
-        self,
-        entries,
-        lectures_per_course,
-        max_lectures_per_day,
-        lecture_duration,
-        time_slots,
-        population_size,
-        max_generations,
-        mutation_rate
-    ):
-        """
-        entries: List of timetable entries (dicts) to schedule
-        shift: Shift (e.g., Morning or Evening) for which the timetable is being generated
-        lectures_per_course: Number of lectures per course per week
-        max_lectures_per_day: Maximum lectures of the same course per day
-        lecture_duration: Duration of each lecture in minutes
-        time_slots: List of available time slots (from UI)
-        population_size: Number of candidate timetables per generation
-        max_generations: Number of generations to evolve
-        mutation_rate: Probability of mutation per assignment
-        """
+    def __init__(self,
+                 *,
+                 entries,                # List of dictionaries with course details
+                 time_slots_input,       # List of pre-generated time slot strings from UI
+                 lectures_per_course,
+                 course_exceptions=None, # Dictionary for exceptions in required lectures per course
+                 population_size=100,
+                 max_generations=150,    # Increased max generations
+                 mutation_rate=0.20):    # Slightly increased mutation rate
+
+        if not entries:
+            raise ValueError("No timetable entries provided to GA.")
         self.entries = entries
-        if not self.entries:
-            raise ValueError("No timetable entries provided for the specified semester and shift.")
+
+        if not time_slots_input:
+            raise ValueError("No time slots provided to GA.")
+        self.unique_time_slots = list(set(time_slots_input))
 
         self.POPULATION_SIZE = population_size
         self.MAX_GENERATIONS = max_generations
         self.MUTATION_RATE = mutation_rate
         self.LECTURES_PER_COURSE = lectures_per_course
-        self.MAX_LECTURES_PER_DAY = max_lectures_per_day
-        self.LECTURE_DURATION = lecture_duration
-        self.unique_time_slots = time_slots
+        self.course_exceptions = course_exceptions or {}
 
-        # Extract unique values from entries
-        self.unique_rooms = list({e['room'] for e in self.entries})
-        self.unique_teachers = list({e['teacher'] for e in self.entries})
+        # Convert room names to string
+        for entry in self.entries:
+            entry['room'] = str(entry['room'])
 
-        # Group time slots by day for distribution checks
+        # Extract unique sets
+        self.unique_rooms = list(set(e['room'] for e in self.entries))
+        self.unique_teachers = list(set(e['teacher'] for e in self.entries))
+        self.unique_sections = list(set(e['class_section'] for e in self.entries))
+
+        # Group time slots by day
         self.time_slots_by_day = {}
         for ts in self.unique_time_slots:
-            day = ts.split()[0]
-            if day not in self.time_slots_by_day:
-                self.time_slots_by_day[day] = []
-            self.time_slots_by_day[day].append(ts)
-        # Ensure time slots are sorted
-        for day in self.time_slots_by_day:
-            self.time_slots_by_day[day].sort()
-        # print(f"[DEBUG] Time slots by day: {self.time_slots_by_day}")
+            try:
+                day = ts.split()[0]
+                self.time_slots_by_day.setdefault(day, []).append(ts)
+            except IndexError:
+                print(f"Warning: Could not parse day from time slot: {ts}")
 
-        # Extract unique courses and sections
-        self.unique_courses = list({e['course'] for e in self.entries})
-        # Use 'class' or 'class_section' depending on your schema
-        section_key = 'class_section' if 'class_section' in self.entries[0] else 'class'
-        self.section_key = section_key
-        self.unique_sections = list({e[section_key] for e in self.entries})
+        # Define ordered weekdays and filter to available
+        day_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        self.ordered_days = [d for d in day_order if d in self.time_slots_by_day]
 
-        # Add tracking for best fitness
         self.best_fitness_history = []
+        print(f"GA initialized with {len(self.entries)} entries, {len(self.unique_time_slots)} time slots.")
+        print(f"Lectures per course: {self.LECTURES_PER_COURSE}")
 
-    def generate_initial_population(self):
-        # Generate initial population of random timetables with debug output.
-        population = []
-        for idx in range(self.POPULATION_SIZE):
-            timetable = self._create_random_timetable()
-            # print(f"[DEBUG] Initial timetable {idx+1}/{self.POPULATION_SIZE} generated with {len(timetable)} assignments.")
-            population.append(timetable)
-        return population
+        # Store required lectures for each course
+        self.required_lectures = {}
+        for entry in self.entries:
+            code = entry['course_code']
+            self.required_lectures[code] = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
+        
+        # Create a mapping of teachers to courses they teach
+        self.teacher_courses = {}
+        for entry in self.entries:
+            teacher = entry['teacher']
+            if teacher not in self.teacher_courses:
+                self.teacher_courses[teacher] = []
+            course_key = (entry['course_name'], entry['course_code'], entry['class_section'])
+            if course_key not in self.teacher_courses[teacher]:
+                self.teacher_courses[teacher].append(course_key)
+        
+        # Debug available vs required lectures
+        self.debug_timetable_requirements()
+
+    def debug_timetable_requirements(self):
+        """Debug function to check lecture requirements vs available slots"""
+        total_lectures = 0
+        lectures_by_section = {}
+        lectures_by_section_course = {}
+        
+        # Count required lectures by section and section-course
+        for entry in self.entries:
+            section = entry['class_section']
+            code = entry['course_code']
+            course = entry['course_name']
+            required = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
+            
+            if section not in lectures_by_section:
+                lectures_by_section[section] = 0
+                lectures_by_section_course[section] = {}
+            
+            key = (course, code)
+            if key not in lectures_by_section_course[section]:
+                lectures_by_section[section] += required
+                total_lectures += required
+                lectures_by_section_course[section][key] = required
+        
+        # Count available slots
+        total_slots = len(self.unique_time_slots)
+        
+        print(f"Total required lectures across all sections: {total_lectures}")
+        print(f"Available unique time slots: {total_slots}")
+        print("Lectures required by section:")
+        for section, count in lectures_by_section.items():
+            print(f"  Section {section}: {count} lectures")
+            if count > total_slots:
+                print(f"  WARNING: Section {section} requires {count} lectures but only {total_slots} slots available")
+        
+        # Check individual course requirements
+        print("Detailed course requirements by section:")
+        for section, courses in lectures_by_section_course.items():
+            print(f"  Section {section}:")
+            for (course, code), required in courses.items():
+                print(f"    {course} ({code}): {required} lectures")
+        
+        # Print teacher workload
+        print("\nTeacher assignments:")
+        for teacher, courses in self.teacher_courses.items():
+            total_lectures = 0
+            for course_name, course_code, section in courses:
+                required = self.course_exceptions.get(course_code, self.LECTURES_PER_COURSE)
+                total_lectures += required
+            print(f"  {teacher}: {len(courses)} courses, approximately {total_lectures} lectures")
 
     def _create_random_timetable(self):
-        """
-        Create a single random timetable assignment with better distribution.
-        Uses the GA parameters provided to the class instance.
-        """
+        """Create a random timetable with improved teacher conflict handling"""
         timetable = {}
-        courses_by_section = {}
+        section_time_slot_usage = {section: set() for section in self.unique_sections}
+        teacher_time_slot_usage = {teacher: set() for teacher in self.unique_teachers}
+        course_assignments = {}
 
-        # First pass: group courses by section (not used further, can be removed if not needed)
+        # Group entries by section for separate processing
+        entries_by_section = {}
         for entry in self.entries:
-            section = entry[self.section_key]
-            if section not in courses_by_section:
-                courses_by_section[section] = []
-            courses_by_section[section].append(entry['course'])
+            section = entry['class_section']
+            if section not in entries_by_section:
+                entries_by_section[section] = []
+            entries_by_section[section].append(entry)
 
-        # Second pass: create multiple entries per course (self.LECTURES_PER_COURSE times)
-        for entry in self.entries:
-            course = entry['course']
-            section = entry[self.section_key]
+        # For each section, do course assignment separately
+        for section, section_entries in entries_by_section.items():
+            # Prepare a list of (course, section, code, required_lectures) and sort descending by required lectures
+            course_info = []
+            for entry in section_entries:
+                course = entry['course_name']
+                code = entry['course_code']
+                teacher = entry['teacher']
+                required_lectures = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
+                course_info.append((course, section, code, required_lectures, teacher, entry))
+            
+            # Sort by required_lectures descending (prioritize courses with more lectures)
+            course_info.sort(key=lambda x: -x[3])
 
-            # Create multiple lecture instances for each course
-            for i in range(self.LECTURES_PER_COURSE):
-                lecture_key = (course, section, i)
+            # Prepare ordered list of all (day, time) slots for this section
+            all_times = sorted({ts.split(' ', 1)[1] for ts in self.unique_time_slots})
+            all_slots = []
+            for time in all_times:
+                for day in self.ordered_days:
+                    slot_key = f"{day} {time}"
+                    if slot_key in self.unique_time_slots:
+                        all_slots.append((day, time))
 
-                # Try to distribute across different days
-                available_slots = self._get_distributed_time_slot(timetable, course, section)
-                chosen_slot = random.choice(available_slots) if available_slots else random.choice(self.unique_time_slots)
+            # Randomly shuffle the time slots to avoid bias
+            # We'll use this for fallback assignment
+            all_slots_shuffled = all_slots.copy()
+            random.shuffle(all_slots_shuffled)
+            
+            # Create a second copy of slots we'll use for initial preferred time assignment
+            # We'll try to assign consecutive days first when possible
+            preferred_slots = []
+            for time in all_times:
+                # For each time slot (e.g. 7:30-8:30), try to find consecutive days
+                day_groups = []
+                current_group = []
+                
+                for day in self.ordered_days:
+                    slot_key = f"{day} {time}"
+                    if slot_key in self.unique_time_slots:
+                        current_group.append(day)
+                    else:
+                        if current_group:
+                            day_groups.append(current_group)
+                            current_group = []
+                
+                if current_group:  # Don't forget the last group
+                    day_groups.append(current_group)
+                
+                # Add these grouped days to preferred slots
+                for group in day_groups:
+                    for day in group:
+                        preferred_slots.append((day, time))
 
-                timetable[lecture_key] = {
-                    'time_slot': chosen_slot,
-                    'room': entry['room'],
-                    'teacher': entry['teacher']
-                }
-            # Debug print for each assignment
-            # print(f"[DEBUG] Assigned: Course={course}, Section={section}, Instance={i}, "
-            #     f"Teacher={entry['teacher']}, Room={entry['room']}, Slot={chosen_slot}")
+            # For each course in this section, assign time slots
+            for course, section, code, required_lectures, teacher, entry in course_info:
+                assigned_slots = []
+                key_prefix = (course, section, code)
+                
+                # First attempt: try to use consecutive days at the same time if possible
+                if required_lectures <= len(self.ordered_days):  # Only try this for courses that could fit consecutive days
+                    for time in all_times:
+                        # Find consecutive days with available slots that don't conflict with teacher's schedule
+                        consecutive_days = []
+                        for day in self.ordered_days:
+                            slot_key = f"{day} {time}"
+                            if (slot_key in self.unique_time_slots 
+                                and slot_key not in section_time_slot_usage[section]
+                                and slot_key not in teacher_time_slot_usage[teacher]):  # Check teacher availability
+                                consecutive_days.append(day)
+                            else:
+                                # Break in consecutive days, check if we have enough
+                                if len(consecutive_days) >= required_lectures:
+                                    break
+                                consecutive_days = []  # Reset and continue looking
+                        
+                        # If we found enough consecutive days at this time slot
+                        if len(consecutive_days) >= required_lectures:
+                            for i in range(required_lectures):
+                                day = consecutive_days[i]
+                                slot_key = f"{day} {time}"
+                                assigned_slots.append((day, time))
+                                section_time_slot_usage[section].add(slot_key)
+                                teacher_time_slot_usage[teacher].add(slot_key)  # Mark teacher as busy
+                            break  # We've assigned all needed slots for this course
+                
+                # Second attempt: try to find the same time slot on any days
+                if len(assigned_slots) < required_lectures:
+                    for time in all_times:
+                        available_days = []
+                        for day in self.ordered_days:
+                            slot_key = f"{day} {time}"
+                            if (slot_key in self.unique_time_slots 
+                                and slot_key not in section_time_slot_usage[section]
+                                and slot_key not in teacher_time_slot_usage[teacher]):  # Check teacher availability
+                                available_days.append(day)
+                        
+                        if len(available_days) >= required_lectures - len(assigned_slots):
+                            needed = required_lectures - len(assigned_slots)
+                            for i in range(needed):
+                                day = available_days[i]
+                                slot_key = f"{day} {time}"
+                                assigned_slots.append((day, time))
+                                section_time_slot_usage[section].add(slot_key)
+                                teacher_time_slot_usage[teacher].add(slot_key)  # Mark teacher as busy
+                            break  # We've assigned all needed slots for this course
+                
+                # Final attempt: use any available slots (fallback method)
+                if len(assigned_slots) < required_lectures:
+                    # Prioritize slots where teacher is not already scheduled
+                    for day, time in all_slots_shuffled:
+                        slot_key = f"{day} {time}"
+                        if (slot_key not in section_time_slot_usage[section] 
+                            and slot_key not in teacher_time_slot_usage[teacher]):  # Check teacher availability
+                            assigned_slots.append((day, time))
+                            section_time_slot_usage[section].add(slot_key)
+                            teacher_time_slot_usage[teacher].add(slot_key)  # Mark teacher as busy
+                            if len(assigned_slots) == required_lectures:
+                                break
+                    
+                    # If we still don't have enough, allow teacher conflicts (but warn about it)
+                    if len(assigned_slots) < required_lectures:
+                        print(f"WARNING: Teacher conflict may be unavoidable for {teacher} - {course} ({code})")
+                        for day, time in all_slots_shuffled:
+                            slot_key = f"{day} {time}"
+                            if slot_key not in section_time_slot_usage[section]:
+                                assigned_slots.append((day, time))
+                                section_time_slot_usage[section].add(slot_key)
+                                # Make note of potential teacher conflict but still add it
+                                if slot_key in teacher_time_slot_usage[teacher]:
+                                    print(f"CONFLICT: Teacher {teacher} double-booked at {slot_key}")
+                                teacher_time_slot_usage[teacher].add(slot_key)
+                                if len(assigned_slots) == required_lectures:
+                                    break
+                
+                # Create timetable entries for this course
+                for idx, (day, time) in enumerate(assigned_slots):
+                    key = (course, section, idx, code)
+                    timetable[key] = {
+                        'course_name': course,
+                        'course_code': code,
+                        'course_indicators': entry.get('course_indicators', ''),
+                        'time_slot': f"{day} {time}",
+                        'room': entry['room'],
+                        'teacher': teacher,
+                        'semester': entry['semester'],
+                        'class_section': section
+                    }
 
+        # Final check: verify we haven't assigned conflicting slots
+        self._verify_timetable_slots(timetable)
         return timetable
+
+    def _verify_timetable_slots(self, timetable):
+        """Verify that the timetable doesn't have conflicting slot assignments"""
+        section_timeslots = {}
+        teacher_timeslots = {}
+        room_timeslots = {}
         
-    def _get_distributed_time_slot(self, timetable, course, section):
-        """Get time slots that help distribute this course across different days."""
-        # Count how many lectures for this course are on each day
-        days_used = {}
+        # Track all types of conflicts
+        teacher_conflicts = 0
+        section_conflicts = 0
+        room_conflicts = 0
+        
         for key, details in timetable.items():
-            if len(key) >= 2 and key[0] == course and key[1] == section:
-                day = details['time_slot'].split()[0]
-                if day not in days_used:
-                    days_used[day] = 0
-                days_used[day] += 1
-
-        # Prioritize days with fewer lectures of this course
-        preferred_days = []
-        for day in self.time_slots_by_day:
-            count = days_used.get(day, 0)
-            if count < self.MAX_LECTURES_PER_DAY:
-                preferred_days.append((day, count))
-
-        # Sort by usage (least used first)
-        preferred_days.sort(key=lambda x: x[1])
-
-        # Combine all slots from all preferred days (not just the least-used one)
-        if preferred_days:
-            slots = []
-            for day, _ in preferred_days:
-                slots.extend(self.time_slots_by_day[day])
-            return slots
+            section = details['class_section']
+            time_slot = details['time_slot']
+            teacher = details['teacher']
+            room = details['room']
+            
+            # Check section-timeslot conflicts
+            if section not in section_timeslots:
+                section_timeslots[section] = {}
+            if time_slot in section_timeslots[section]:
+                section_conflicts += 1
+                print(f"WARNING: Conflicting timeslot {time_slot} for section {section}")
+                print(f"  - {section_timeslots[section][time_slot]['course_name']} vs {details['course_name']}")
+            section_timeslots[section][time_slot] = details
+            
+            # Check teacher-timeslot conflicts
+            if teacher not in teacher_timeslots:
+                teacher_timeslots[teacher] = {}
+            if time_slot in teacher_timeslots[teacher]:
+                teacher_conflicts += 1
+                print(f"WARNING: Conflicting timeslot {time_slot} for teacher {teacher}")
+                print(f"  - {teacher_timeslots[teacher][time_slot]['course_name']} ({teacher_timeslots[teacher][time_slot]['class_section']}) vs {details['course_name']} ({details['class_section']})")
+            teacher_timeslots[teacher][time_slot] = details
+            
+            # Check room-timeslot conflicts
+            room_key = f"{room}_{time_slot}"
+            if room_key in room_timeslots:
+                room_conflicts += 1
+                print(f"WARNING: Room conflict at {time_slot} in room {room}")
+            room_timeslots[room_key] = details
         
-        return self.unique_time_slots
- 
- 
+        # Report total conflicts
+        if teacher_conflicts > 0 or section_conflicts > 0 or room_conflicts > 0:
+            print(f"CONFLICT SUMMARY: {teacher_conflicts} teacher conflicts, {section_conflicts} section conflicts, {room_conflicts} room conflicts")
+        else:
+            print("No conflicts found in timetable.")
+        
+        # Print teacher daily workload
+        teacher_daily_load = {}
+        for teacher, slots in teacher_timeslots.items():
+            for time_slot in slots:
+                day = time_slot.split()[0]
+                key = f"{teacher}_{day}"
+                teacher_daily_load[key] = teacher_daily_load.get(key, 0) + 1
+        
+        print("\nTeacher daily workload:")
+        for key, count in teacher_daily_load.items():
+            teacher, day = key.rsplit("_", 1)
+            if count > 3:
+                print(f"  {teacher} on {day}: {count} lectures")
+
     def calculate_fitness(self, timetable):
-        """Calculate fitness score: lower is better (fewer conflicts). Debug version."""
+        if timetable is None:
+            return float('inf')
+
         score = 0
+        time_slot_usage = {}  # Track all courses in each time slot
         room_usage = {}
         teacher_usage = {}
         class_usage = {}
+        course_lecture_counts = {}
+        teacher_daily_load = {}
+        section_daily_load = {}
+        course_time_slots = {}
+        teacher_conflicts = 0  # Track specific teacher conflicts
 
-        # Track distribution metrics
-        course_day_counts = {}  # (course, section) -> {day: count}
-        day_conflicts = {}
-        teacher_day_load = {}
+        for key, details in timetable.items():
+            course = details['course_name']
+            code = details['course_code']
+            section = details['class_section']
+            time_slot = details['time_slot']
+            room = details['room']
+            teacher = details['teacher']
+            
+            day, time = time_slot.split(' ', 1)
+            course_key = (course, section, code)
 
-        print("\n[DEBUG] --- Calculating Fitness ---")
-        for (course, class_sec, instance), details in timetable.items():
-            ts = details['time_slot']
-            rm = details['room']
-            tch = details['teacher']
+            # Check for multiple courses in same time slot
+            if time_slot not in time_slot_usage:
+                time_slot_usage[time_slot] = []
+            time_slot_usage[time_slot].append(course_key)
+            if len(time_slot_usage[time_slot]) > 1:
+                score += 10000  # Very heavy penalty for multiple courses in same time slot
 
-            # Extract day from time slot (format: "Day HH:MM AM-HH:MM PM")
-            day = ts.split()[0] if ' ' in ts else 'Unknown'
+            # Track unique time slots used per course
+            if course_key not in course_time_slots:
+                course_time_slots[course_key] = set()
+            course_time_slots[course_key].add(time)
 
-            # Room conflict - same room, same time
-            room_key = f"{ts}_{rm}"
+            # Count lectures per course
+            if course_key not in course_lecture_counts:
+                course_lecture_counts[course_key] = 0
+            course_lecture_counts[course_key] += 1
+
+            # Room conflicts
+            room_key = f"{time_slot}_{room}"
             if room_key in room_usage:
-                print(f"[DEBUG] Room conflict: {rm} at {ts} for {course}-{class_sec}")
-                score += 20  # Major penalty for room double-booking
-            room_usage[room_key] = (course, class_sec)
+                score += 5000
+            room_usage[room_key] = course_key
 
-            # Teacher conflict - same teacher, same time
-            teacher_key = f"{tch}_{ts}"
+            # Teacher conflicts - HIGHER PENALTY
+            teacher_key = f"{time_slot}_{teacher}"
             if teacher_key in teacher_usage:
-                print(f"[DEBUG] Teacher conflict: {tch} at {ts} for {course}-{class_sec}")
-                score += 15  # Penalty for teacher double-booking
-            teacher_usage[teacher_key] = (course, class_sec)
+                score += 10000  # Increased penalty for teacher conflicts
+                teacher_conflicts += 1
+            teacher_usage[teacher_key] = course_key
 
-            # Class conflict - same class, same time
-            class_key = f"{class_sec}_{ts}"
+            # Class conflicts
+            class_key = f"{time_slot}_{section}"
             if class_key in class_usage:
-                print(f"[DEBUG] Class conflict: {class_sec} at {ts} for {course}")
-                score += 25  # Severe penalty for class double-booking
-            class_usage[class_key] = (course, class_sec)
+                score += 5000
+            class_usage[class_key] = course_key
 
-            # Track course distribution across days
-            course_key = (course, class_sec)
-            if course_key not in course_day_counts:
-                course_day_counts[course_key] = {}
-            if day not in course_day_counts[course_key]:
-                course_day_counts[course_key][day] = 0
-            course_day_counts[course_key][day] += 1
+            # Daily load tracking - stricter limits
+            teacher_day_key = f"{teacher}_{day}"
+            teacher_daily_load[teacher_day_key] = teacher_daily_load.get(teacher_day_key, 0) + 1
+            if teacher_daily_load[teacher_day_key] > 3:  # Reduced from 4 to 3
+                score += 100 * (teacher_daily_load[teacher_day_key] - 3)  # Increased penalty
 
-            # Penalize multiple classes of same course on same day
-            if course_day_counts[course_key][day] > self.MAX_LECTURES_PER_DAY:
-                print(f"[DEBUG] Too many lectures for {course} - {class_sec} on {day}")
-                score += 15  # Strong penalty for clustering too many lectures on same day
+            section_day_key = f"{section}_{day}"
+            section_daily_load[section_day_key] = section_daily_load.get(section_day_key, 0) + 1
+            if section_daily_load[section_day_key] > 5:
+                score += 50 * (section_daily_load[section_day_key] - 5)
 
-            # Track class occurrences per day
-            if day not in day_conflicts:
-                day_conflicts[day] = {}
-            if class_sec not in day_conflicts[day]:
-                day_conflicts[day][class_sec] = 0
-            day_conflicts[day][class_sec] += 1
+        # Create a mapping of required lectures that accounts for section-specific courses
+        required_lectures = {}
+        for entry in self.entries:
+            course_key = (entry['course_name'], entry['class_section'], entry['course_code'])
+            required = self.course_exceptions.get(entry['course_code'], self.LECTURES_PER_COURSE)
+            required_lectures[course_key] = required
 
-            # Penalize multiple classes for same section on same day
-            if day_conflicts[day][class_sec] > 3:
-                print(f"[DEBUG] Too many classes for section {class_sec} on {day}")
-                score += 10  # Penalty for 4+ classes same day for same section
+        # Check lecture count requirements
+        for course_key, required in required_lectures.items():
+            actual = course_lecture_counts.get(course_key, 0)
+            
+            if actual != required:
+                # Heavy penalty for wrong lecture count - but make it proportional to the difference
+                score += 5000 * abs(actual - required)
 
-            # Track teacher load per day
-            if tch not in teacher_day_load:
-                teacher_day_load[tch] = {}
-            if day not in teacher_day_load[tch]:
-                teacher_day_load[tch][day] = 0
-            teacher_day_load[tch][day] += 1
+        # Check same time slot requirement
+        for course_key, times in course_time_slots.items():
+            if len(times) > 1:
+                score += 1000  # Penalty for different time slots
+                # Add a slightly smaller penalty for each additional time slot
+                score += 500 * (len(times) - 1)
 
-            # Penalize teachers with more than 3 classes per day
-            if teacher_day_load[tch][day] > 3:
-                print(f"[DEBUG] Teacher {tch} overloaded on {day}")
-                score += 5  # Penalty for excessive teacher workload per day
-
-        # Add penalties for courses not spread across enough days
-        for course_key, day_data in course_day_counts.items():
-            # Penalize if a course isn't spread across enough different days
-            if len(day_data) < min(3, len(self.time_slots_by_day)):
-                print(f"[DEBUG] {course_key} not spread across enough days ({len(day_data)})")
-                score += 20 * (min(3, len(self.time_slots_by_day)) - len(day_data))
-
-            # Penalize if course doesn't have exactly the required number of lectures
-            total_lectures = sum(day_data.values())
-            if total_lectures != self.LECTURES_PER_COURSE:
-                print(f"[DEBUG] {course_key} has wrong number of lectures ({total_lectures})")
-                score += 30 * abs(total_lectures - self.LECTURES_PER_COURSE)
-
-        print(f"[DEBUG] Fitness score: {score}\n")
+        # Reward for consecutive days at same time
+        for course_key, required in required_lectures.items():
+            # Only check if course has multiple lectures
+            if required > 1:
+                # Get all time slots for this course
+                course_slots = [details['time_slot'] for key, details in timetable.items() 
+                               if (details['course_name'], details['class_section'], details['course_code']) == course_key]
+                
+                if not course_slots:
+                    continue
+                    
+                # Check if all times are the same
+                times = [slot.split(' ', 1)[1] for slot in course_slots]
+                if len(set(times)) == 1:
+                    # All lectures are at the same time, check for consecutive days
+                    days = [slot.split(' ', 1)[0] for slot in course_slots]
+                    day_indices = [self.ordered_days.index(day) for day in days if day in self.ordered_days]
+                    day_indices.sort()
+                    
+                    # Check for consecutive days
+                    consecutive = True
+                    for i in range(1, len(day_indices)):
+                        if day_indices[i] != day_indices[i-1] + 1:
+                            consecutive = False
+                            break
+                    
+                    if consecutive:
+                        # Reward for consecutive days at same time
+                        score -= 500  # Negative score is good
+        
+        # Add extra penalty for teacher conflicts
+        score += 5000 * teacher_conflicts
+                
         return score
-        
-    
-    def crossover(self, parent1, parent2):
-        """
-        Combine two parent timetables into one child via uniform crossover.
-        Each assignment (lecture) is randomly chosen from one of the parents.
-        """
+
+    def generate_initial_population(self):
+        population = []
+        for i in range(self.POPULATION_SIZE):
+            timetable = self._create_random_timetable()
+            if timetable is None:
+                print(f"Warning: Failed to create valid timetable for individual {i+1}.")
+                continue
+            population.append(timetable)
+        if not population:
+            raise ValueError("Failed to generate any initial population. Check constraints.")
+        return population
+
+    def crossover(self, p1, p2):
+        """Perform crossover between two parent timetables with improved teacher conflict awareness"""
+        if not p1 or not p2:  # Safety check
+            return self._create_random_timetable()
+            
         child = {}
-        keys = list(parent1.keys())
-
-        for k in keys:
-            # 50% chance of inheriting from each parent
-            if random.random() < 0.5:
-                # Use .copy() to avoid reference issues
-                child[k] = parent1[k].copy()
-            else:
-                child[k] = parent2[k].copy()
-
-        # Optionally, you can add a debug print to see the crossover result
-        # print(f"[DEBUG] Crossover produced child with {len(child)} assignments.")
-
-        return child
+        teacher_time_slot_usage = {teacher: set() for teacher in self.unique_teachers}
         
+        # Group courses by section for each parent
+        p1_by_section = {}
+        p2_by_section = {}
+        
+        for key, details in p1.items():
+            section = details['class_section']
+            if section not in p1_by_section:
+                p1_by_section[section] = {}
+            p1_by_section[section][key] = details
+            
+        for key, details in p2.items():
+            section = details['class_section']
+            if section not in p2_by_section:
+                p2_by_section[section] = {}
+            p2_by_section[section][key] = details
+        
+        # For each section, perform crossover between parent sections
+        for section in set(list(p1_by_section.keys()) + list(p2_by_section.keys())):
+            # If section exists in only one parent, just copy it
+            if section not in p1_by_section:
+                child.update(p2_by_section[section])
+                # Update teacher usage
+                for key, details in p2_by_section[section].items():
+                    teacher_time_slot_usage[details['teacher']].add(details['time_slot'])
+                continue
+            if section not in p2_by_section:
+                child.update(p1_by_section[section])
+                # Update teacher usage
+                for key, details in p1_by_section[section].items():
+                    teacher_time_slot_usage[details['teacher']].add(details['time_slot'])
+                continue
+                
+            # Group by course within section
+            p1_courses = {}
+            p2_courses = {}
+            
+            for key, details in p1_by_section[section].items():
+                course = (details['course_name'], details['course_code'])
+                if course not in p1_courses:
+                    p1_courses[course] = []
+                p1_courses[course].append((key, details))
+                
+            for key, details in p2_by_section[section].items():
+                course = (details['course_name'], details['course_code'])
+                if course not in p2_courses:
+                    p2_courses[course] = []
+                p2_courses[course].append((key, details))
+            
+            # Choose between parent schedules for each course, preferring the one with fewer teacher conflicts
+            for course in set(list(p1_courses.keys()) + list(p2_courses.keys())):
+                # Check if both parents have this course
+                if course in p1_courses and course in p2_courses:
+                    # Evaluate potential conflicts in each parent's schedule for this course
+                    p1_conflicts = 0
+                    p2_conflicts = 0
+                    
+                    # Count conflicts for parent 1
+                    for _, details in p1_courses[course]:
+                        teacher = details['teacher']
+                        time_slot = details['time_slot']
+                        if time_slot in teacher_time_slot_usage[teacher]:
+                            p1_conflicts += 1
+                    
+                    # Count conflicts for parent 2
+                    for _, details in p2_courses[course]:
+                        teacher = details['teacher']
+                        time_slot = details['time_slot']
+                        if time_slot in teacher_time_slot_usage[teacher]:
+                            p2_conflicts += 1
+                    
+                    # Choose parent with fewer conflicts (or randomly if equal)
+                    if p1_conflicts < p2_conflicts:
+                        chosen_parent = p1_courses[course]
+                    elif p2_conflicts < p1_conflicts:
+                        chosen_parent = p2_courses[course]
+                    else:
+                        # Equal conflicts, choose randomly
+                        chosen_parent = p1_courses[course] if random.random() < 0.5 else p2_courses[course]
+                
+                elif course in p1_courses:
+                    chosen_parent = p1_courses[course]
+                else:
+                    chosen_parent = p2_courses[course]
+                
+                # Add chosen course schedule to child
+                for key, details in chosen_parent:
+                    # Create a new key with the same structure
+                    new_key = key
+                    child[new_key] = dict(details)  # Copy to avoid reference issues
+                    # Update teacher usage
+                    teacher_time_slot_usage[details['teacher']].add(details['time_slot'])
+        
+        return child
+
     def mutate(self, timetable):
-        """Randomly mutate some assignments in the timetable. Debug version."""
-        for key in list(timetable.keys()):
+        if not isinstance(timetable, dict):
+            print("Warning: Mutation received invalid timetable.")
+            return {}
+            
+        # Create a copy of the timetable to avoid modifying the original
+        mutated_timetable = {}
+        for key, value in timetable.items():
+            mutated_timetable[key] = value.copy()
+        
+        # Track teacher assignments and conflicts to prioritize mutation targets
+        teacher_time_slots = {}
+        teacher_conflicts = {}
+        
+        # Identify teacher assignments and conflicts
+        for key, details in mutated_timetable.items():
+            teacher = details['teacher']
+            time_slot = details['time_slot']
+            
+            if teacher not in teacher_time_slots:
+                teacher_time_slots[teacher] = {}
+                teacher_conflicts[teacher] = []
+            
+            if time_slot in teacher_time_slots[teacher]:
+                # This is a conflict - add both this and the other course to conflicts list
+                conflict_key = teacher_time_slots[teacher][time_slot]
+                teacher_conflicts[teacher].append((key, conflict_key))
+            else:
+                teacher_time_slots[teacher][time_slot] = key
+        
+        # If there are teacher conflicts, prioritize mutating those
+        conflict_mutations = 0
+        for teacher, conflicts in teacher_conflicts.items():
+            if conflicts and random.random() < 0.8:  # High chance to fix conflicts
+                # Pick a random conflict to fix
+                course_key, conflict_key = random.choice(conflicts)
+                
+                # Decide which course to move (randomly)
+                key_to_mutate = course_key if random.random() < 0.5 else conflict_key
+                details = mutated_timetable[key_to_mutate]
+                
+                # Find alternative time slots where this teacher is not scheduled
+                current_time_slot = details['time_slot']
+                available_slots = []
+                
+                for time_slot in self.unique_time_slots:
+                    if time_slot != current_time_slot and time_slot not in teacher_time_slots[teacher]:
+                        available_slots.append(time_slot)
+                
+                if available_slots:
+                    # Move this course to a new time slot
+                    new_time_slot = random.choice(available_slots)
+                    mutated_timetable[key_to_mutate]['time_slot'] = new_time_slot
+                    conflict_mutations += 1
+        
+        # Group by course-section for regular mutations
+        blocks = {}
+        for key in mutated_timetable:
+            # key can be (course, section, idx, code)
+            course, section, idx = key[0], key[1], key[2]
+            code = key[3] if len(key) > 3 else None
+            blocks.setdefault((course, section, code), []).append(key)
+        
+        # Mutate whole blocks (courses) with standard probability
+        for cs, keys in blocks.items():
+            course, section, code = cs
+            required = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
             if random.random() < self.MUTATION_RATE:
-                old_slot = timetable[key]['time_slot']
-                timetable[key]['time_slot'] = random.choice(self.unique_time_slots)
-                print(f"[DEBUG] Mutated {key}: {old_slot} -> {timetable[key]['time_slot']}")
-        return timetable
+                # For this course-section, we'll try new time slots
+                # First, find all possible time slots
+                possible_slots = list(self.unique_time_slots)
+                random.shuffle(possible_slots)
+                
+                # Get current slots for comparison
+                current_slots = [mutated_timetable[key]['time_slot'] for key in keys]
+                
+                # Try to find a better assignment - prioritize same time different days
+                if len(set(slot.split(' ', 1)[1] for slot in current_slots)) == 1:
+                    # Currently all using same time, try to preserve this good property
+                    current_time = current_slots[0].split(' ', 1)[1]
+                    # Find all slots at this time
+                    same_time_slots = [s for s in possible_slots if s.split(' ', 1)[1] == current_time]
+                    
+                    if len(same_time_slots) >= required:
+                        # Enough slots at same time, randomly assign
+                        random.shuffle(same_time_slots)
+                        for i, key in enumerate(keys):
+                            if i < required:
+                                mutated_timetable[key]['time_slot'] = same_time_slots[i]
+                else:
+                    # Try to get same time slots
+                    for time in set(slot.split(' ', 1)[1] for slot in possible_slots):
+                        same_time_slots = [s for s in possible_slots if s.split(' ', 1)[1] == time]
+                        if len(same_time_slots) >= required:
+                            random.shuffle(same_time_slots)
+                            for i, key in enumerate(keys):
+                                if i < required:
+                                    mutated_timetable[key]['time_slot'] = same_time_slots[i]
+                            break
+        
+        # Occasional room mutation
+        for key, details in mutated_timetable.items():
+            if random.random() < self.MUTATION_RATE * 0.2:  # Lower chance for room mutation
+                details['room'] = random.choice(self.unique_rooms)
+        
+        return mutated_timetable
 
-    def generate_optimized_timetable(self):
-        """Run the genetic algorithm and return the best timetable found. Debug version."""
-        if not self.entries:
-            return None
+    def select_parents(self, population, fitness_scores):
+        """Tournament selection with better fitness (lower score) prioritized"""
+        tournament_size = max(3, self.POPULATION_SIZE // 10)
+        
+        # First tournament
+        tournament_indices = random.sample(range(len(population)), tournament_size)
+        parent1_idx = min(tournament_indices, key=lambda i: fitness_scores[i])
+        
+        # Second tournament
+        tournament_indices = random.sample(range(len(population)), tournament_size)
+        parent2_idx = min(tournament_indices, key=lambda i: fitness_scores[i])
+        
+        return population[parent1_idx], population[parent2_idx]
 
+    def evolve(self):
+        # Initialize population
+        print("Generating initial population...")
+        start_time = datetime.now()
         population = self.generate_initial_population()
-        best_fitness = float('inf')
-        best_solution = None
+        
+        # Find the best initial timetable
+        fitness_scores = [self.calculate_fitness(tt) for tt in population]
+        best_idx = fitness_scores.index(min(fitness_scores))
+        best_timetable = population[best_idx]
+        best_fitness = fitness_scores[best_idx]
+        
+        print(f"Initial population generated in {datetime.now() - start_time}")
+        print(f"Initial best fitness: {best_fitness}")
+        self.best_fitness_history.append(best_fitness)
+        
         no_improvement_count = 0
-
-        for generation in range(self.MAX_GENERATIONS):
-            print(f"\n[DEBUG] --- Generation {generation+1} ---")
-            # Evaluate all solutions
-            scored = [(tt, self.calculate_fitness(tt)) for tt in population]
-            # Sort ascending by score (lower is better)
-            scored.sort(key=lambda x: x[1])
-
-            current_best = scored[0]
-            self.best_fitness_history.append(current_best[1])
-
-            print(f"[DEBUG] Best fitness this generation: {current_best[1]}")
-
-            # Check if we found a better solution
-            if current_best[1] < best_fitness:
-                best_fitness = current_best[1]
-                best_solution = current_best[0]
+        generation = 0
+        
+        while generation < self.MAX_GENERATIONS and no_improvement_count < 30:
+            generation += 1
+            
+            # Create new population
+            new_population = []
+            
+            # Elitism: Keep the best individual
+            new_population.append(best_timetable)
+            
+            while len(new_population) < self.POPULATION_SIZE:
+                # Select parents
+                parent1, parent2 = self.select_parents(population, fitness_scores)
+                
+                # Crossover
+                child = self.crossover(parent1, parent2)
+                
+                # Mutation
+                if random.random() < self.MUTATION_RATE:
+                    child = self.mutate(child)
+                
+                new_population.append(child)
+            
+            # Update population
+            population = new_population
+            
+            # Calculate fitness scores
+            fitness_scores = [self.calculate_fitness(tt) for tt in population]
+            current_best_idx = fitness_scores.index(min(fitness_scores))
+            current_best_fitness = fitness_scores[current_best_idx]
+            
+            # Update best timetable if better
+            if current_best_fitness < best_fitness:
+                best_fitness = current_best_fitness
+                best_timetable = population[current_best_idx]
                 no_improvement_count = 0
-                print(f"[DEBUG] New best solution found with fitness {best_fitness}")
+                print(f"Generation {generation}: Improved fitness to {best_fitness}")
             else:
                 no_improvement_count += 1
+            
+            self.best_fitness_history.append(best_fitness)
+            
+            # Print progress every 10 generations
+            if generation % 10 == 0:
+                print(f"Generation {generation}: Best fitness = {best_fitness}")
+                
+                # Debug stats: teacher conflicts
+                self._check_teacher_conflicts(best_timetable)
+        
+        print(f"Evolution completed after {generation} generations")
+        print(f"Final best fitness: {best_fitness}")
+        
+        # Final verification of the best timetable
+        self._verify_timetable_slots(best_timetable)
+        
+        # Final check for teacher conflicts
+        conflict_count = self._check_teacher_conflicts(best_timetable)
+        if conflict_count > 0:
+            print(f"WARNING: Best solution still has {conflict_count} teacher conflicts")
+            
+        return best_timetable, best_fitness
 
-            # If perfect (0 conflicts) or no improvement for many generations, return early
-            if current_best[1] == 0 or no_improvement_count > 20:
-                print("[DEBUG] Early stopping criteria met.")
-                return best_solution
+    def _check_teacher_conflicts(self, timetable):
+        """Check and report teacher conflicts in the timetable"""
+        teacher_timeslots = {}
+        conflicts = 0
+        
+        for key, details in timetable.items():
+            teacher = details['teacher']
+            time_slot = details['time_slot']
+            
+            if teacher not in teacher_timeslots:
+                teacher_timeslots[teacher] = {}
+                
+            if time_slot in teacher_timeslots[teacher]:
+                conflicts += 1
+                existing = teacher_timeslots[teacher][time_slot]
+                print(f"Teacher conflict: {teacher} at {time_slot}")
+                print(f"  - {existing['course_name']} ({existing['class_section']}) vs {details['course_name']} ({details['class_section']})")
+            else:
+                teacher_timeslots[teacher][time_slot] = details
+        
+        return conflicts
 
-            # Select top performers (elitism)
-            elite_count = self.POPULATION_SIZE // 10  # Top 10%
-            elites = [tt for tt, _ in scored[:elite_count]]
+    def convert_to_schedule_format(self, timetable):
+        """Convert the genetic algorithm timetable to a format suitable for the UI"""
+        schedule = []
+        
+        # Sort keys to ensure consistent order
+        sorted_keys = sorted(timetable.keys())
+        
+        for key in sorted_keys:
+            details = timetable[key]
+            
+            # Create a schedule entry
+            entry = {
+                'course_name': details['course_name'],
+                'course_code': details['course_code'],
+                'course_indicators': details.get('course_indicators', ''),
+                'time_slot': details['time_slot'],
+                'room': details['room'],
+                'teacher': details['teacher'],
+                'semester': details['semester'],
+                'class_section': details['class_section']
+            }
+            
+            schedule.append(entry)
+        
+        return schedule
 
-            # Selection pool - use tournament selection
-            tournament_size = 3
+    def plot_fitness_history(self):
+        """Plot the evolution of fitness over generations"""
+        try:
+            import matplotlib.pyplot as plt
+            
+            generations = list(range(len(self.best_fitness_history)))
+            plt.figure(figsize=(10, 6))
+            plt.plot(generations, self.best_fitness_history, 'b-')
+            plt.title('Fitness Evolution')
+            plt.xlabel('Generation')
+            plt.ylabel('Best Fitness Score (lower is better)')
+            plt.grid(True)
+            
+            # Save plot
+            plt.savefig('fitness_evolution.png')
+            plt.close()
+            
+            print("Fitness evolution plot saved as 'fitness_evolution.png'")
+        except ImportError:
+            print("Matplotlib not available - skipping fitness plot")
 
-            # Create new generation
-            new_pop = elites.copy()  # Keep elites
+def run_genetic_algorithm(entries, time_slots, lectures_per_course, course_exceptions=None):
+    """Run the genetic algorithm and return the best timetable"""
+    try:
+        # Initialize the genetic algorithm
+        ga = TimetableGeneticAlgorithm(
+            entries=entries,
+            time_slots_input=time_slots,
+            lectures_per_course=lectures_per_course,
+            course_exceptions=course_exceptions,
+            population_size=100,
+            max_generations=150,
+            mutation_rate=0.20
+        )
+        
+        # Run the evolution process
+        best_timetable, best_fitness = ga.evolve()
+        
+        # Generate fitness plot
+        ga.plot_fitness_history()
+        
+        # Convert to schedule format
+        schedule = ga.convert_to_schedule_format(best_timetable)
+        
+        return schedule, best_fitness
+    except Exception as e:
+        messagebox.showerror("Genetic Algorithm Error", f"An error occurred while generating the timetable: {str(e)}")
+        print(f"Error in genetic algorithm: {str(e)}")
+        return [], float('inf')
 
-            # Fill the rest with crossover and mutation
-            while len(new_pop) < self.POPULATION_SIZE:
-                # Tournament selection for parents
-                parent1 = min(random.sample(population, tournament_size),
-                              key=self.calculate_fitness)
-                parent2 = min(random.sample(population, tournament_size),
-                              key=self.calculate_fitness)
-
-                # Create child via crossover
-                child = self.crossover(parent1, parent2)
-
-                # Mutate
-                child = self.mutate(child)
-
-                # Add to new population
-                new_pop.append(child)
-
-            population = new_pop
-
-        print("[DEBUG] Finished all generations.")
-        # Return best after final generation
-        return best_solution
+# Example usage (not executed directly):
+"""
+if __name__ == "__main__":
+    # Example data
+    entries = [
+        {
+            'course_name': 'Mathematics',
+            'course_code': 'MATH101',
+            'teacher': 'Dr. Smith',
+            'room': 'Room 101',
+            'semester': '1',
+            'class_section': 'Section A'
+        },
+        # Add more sample entries
+    ]
+    
+    time_slots = [
+        'Monday 9:00-10:00',
+        'Monday 10:00-11:00',
+        'Tuesday 9:00-10:00',
+        # Add more time slots
+    ]
+    
+    # Run the genetic algorithm
+    schedule, fitness = run_genetic_algorithm(
+        entries=entries,
+        time_slots=time_slots,
+        lectures_per_course=3,
+        course_exceptions={'MATH101': 2}  # Example: MATH101 needs only 2 lectures
+    )
+    
+    # Print the resulting schedule
+    for entry in schedule:
+        print(f"{entry['course_name']} - {entry['time_slot']} - {entry['teacher']} - {entry['room']}")
+"""
