@@ -871,32 +871,102 @@ def display_timetable(optimized_timetable_data, available_time_slots,
     win.geometry("1400x900")
     win.state('zoomed')
 
-    # Create main container frame
+    # --- Track current timetable state for export ---
+        # --- Track current timetable state for export ---
+    current_timetable = {}
+    for key_tuple, details in optimized_timetable_data.items():
+        day, time = details['time_slot'].split(" ", 1)
+        section = details['class_section']
+        semester = details.get('semester', 'N/A')
+        current_timetable[(section, semester, day, time)] = details.copy()
+
+    # --- Helper state for selection ---
+    selected_cell = {"widget": None}
+
+    # --- Helper functions ---
+    def select_cell(cell):
+        if selected_cell["widget"]:
+            selected_cell["widget"].config(bg="white")
+        selected_cell["widget"] = cell
+        cell.config(bg="#b3d9ff")  # Highlight
+
+    def deselect_cell():
+        if selected_cell["widget"]:
+            selected_cell["widget"].config(bg="white")
+        selected_cell["widget"] = None
+
+    def on_cell_click(cell):
+        # Deselect if clicking same cell
+        if selected_cell["widget"] == cell:
+            deselect_cell()
+            return
+        # If no cell selected, select this one
+        if selected_cell["widget"] is None:
+            select_cell(cell)
+            return
+        # If another cell is selected, swap
+        swap_cells(selected_cell["widget"], cell)
+        deselect_cell()
+
+    def swap_cells(cell1, cell2):
+        ld1 = getattr(cell1, "lecture_details", None)
+        ld2 = getattr(cell2, "lecture_details", None)
+        # Remove old labels
+        for w in cell1.winfo_children():
+            w.destroy()
+        for w in cell2.winfo_children():
+            w.destroy()
+        # Swap time_slot in details
+        if ld1:
+            ld1 = ld1.copy()
+            ld1["time_slot"] = f"{cell2.day} {cell2.time_slot}"
+        if ld2:
+            ld2 = ld2.copy()
+            ld2["time_slot"] = f"{cell1.day} {cell1.time_slot}"
+        # Assign new details
+        if ld2:
+            create_cell_content(cell1, ld2)
+        else:
+            if hasattr(cell1, "lecture_details"):
+                delattr(cell1, "lecture_details")
+        if ld1:
+            create_cell_content(cell2, ld1)
+        else:
+            if hasattr(cell2, "lecture_details"):
+                delattr(cell2, "lecture_details")
+        # --- Update current_timetable dict ---
+        # Remove old entries
+        key1 = (cell1.section, cell1.semester, cell1.day, cell1.time_slot)
+        key2 = (cell2.section, cell2.semester, cell2.day, cell2.time_slot)
+        current_timetable.pop(key1, None)
+        current_timetable.pop(key2, None)
+        # Add new entries
+        if ld2:
+            new_key1 = (cell1.section, cell1.semester, cell1.day, cell1.time_slot)
+            current_timetable[new_key1] = ld2
+        if ld1:
+            new_key2 = (cell2.section, cell2.semester, cell2.day, cell2.time_slot)
+            current_timetable[new_key2] = ld1
+
+    def create_cell_content(cell, lecture_details):
+        cell_text = f"{lecture_details['course_name']}\n({lecture_details['course_code']})\n{lecture_details.get('course_indicators','')}\n{lecture_details['teacher']}\nR: {lecture_details['room']}"
+        label = tk.Label(cell, text=cell_text, bg=cell.cget("bg"), justify="center", wraplength=180)
+        label.place(relx=0.5, rely=0.5, anchor="center")
+        cell.lecture_details = lecture_details
+
+    # --- UI Layout ---
     main_container = tk.Frame(win)
     main_container.pack(fill="both", expand=True)
 
-    # Metadata frame at top
     meta_frame = tk.Frame(main_container, pady=10)
     meta_frame.pack(fill="x")
-
-    # Metadata display
-    tk.Label(meta_frame, text=timetable_metadata.get("college_name", "College Name N/A"), 
-            font=("Helvetica", 16, "bold")).pack()
-    tk.Label(meta_frame, text=timetable_metadata.get("timetable_title", "Timetable"), 
-            font=("Helvetica", 14)).pack()
-    tk.Label(meta_frame, text=f"Effective Date: {timetable_metadata.get('effective_date', 'N/A')}", 
-            font=("Helvetica", 10)).pack()
-    tk.Label(meta_frame, text=f"Department: {timetable_metadata.get('department_name', 'N/A')}", 
-            font=("Helvetica", 10, "italic")).pack()
-    
-    # Add separator
+    tk.Label(meta_frame, text=timetable_metadata.get("college_name", "College Name N/A"), font=("Helvetica", 16, "bold")).pack()
+    tk.Label(meta_frame, text=timetable_metadata.get("timetable_title", "Timetable"), font=("Helvetica", 14)).pack()
+    tk.Label(meta_frame, text=f"Effective Date: {timetable_metadata.get('effective_date', 'N/A')}", font=("Helvetica", 10)).pack()
+    tk.Label(meta_frame, text=f"Department: {timetable_metadata.get('department_name', 'N/A')}", font=("Helvetica", 10, "italic")).pack()
     ttk.Separator(main_container, orient='horizontal').pack(fill='x', padx=20, pady=5)
 
-    # Add export buttons at the top
-    export_btn_frame = tk.Frame(main_container, pady=10)
-    export_btn_frame.pack(fill="x", padx=20)
-
-    # Group data by class and semester first for export
+    # Group data by class and semester
     class_sem_groups = {}
     for key_tuple, details in optimized_timetable_data.items():
         class_sec = key_tuple[1]
@@ -909,71 +979,73 @@ def display_timetable(optimized_timetable_data, available_time_slots,
             class_sem_groups[group_key][time] = {}
         if day not in class_sem_groups[group_key][time]:
             class_sem_groups[group_key][time][day] = []
-        lecture_info = (f"{details['course_name']} ({details.get('course_code', 'N/A')})\n"
-                        f"{details.get('course_indicators', '')}\n"
-                        f"{details['teacher']}\nR: {details['room']}")
-        class_sem_groups[group_key][time][day].append(lecture_info)
+        class_sem_groups[group_key][time][day].append(details)
 
-    tk.Button(export_btn_frame, text="Export to PDF",
-             command=lambda: export_to_pdf(optimized_timetable_data, available_time_slots, 
-                                         class_sem_groups, timetable_metadata, display_title),
-             bg="#dc3545", fg="white", padx=15, pady=5, 
-             font=('Helvetica', 10)).pack(side="left", padx=10)
+    # Get unique time slots and days
+    time_slots = sorted(list(set(slot.split(" ", 1)[1] for slot in available_time_slots)))
+    days = scheduled_days
 
-    tk.Button(export_btn_frame, text="Close", command=win.destroy,
-             bg="#6c757d", fg="white", padx=15, pady=5, 
-             font=('Helvetica', 10)).pack(side="right", padx=10)
-
-    # Add notebook for timetable display
     notebook = ttk.Notebook(main_container)
     notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
-    # Get unique time slots (without day prefix)
-    time_slots = sorted(list(set(slot.split(" ", 1)[1] for slot in available_time_slots)))
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-
-    # Create a tab for each class-semester combination
     for (semester, section), data in class_sem_groups.items():
-        tab_frame = ttk.Frame(notebook)
-        notebook.add(tab_frame, text=f"{section} - {semester}")
+        tab = tk.Frame(notebook)
+        notebook.add(tab, text=f"{section} - {semester}")
 
-        # Columns: Time, Monday, Tuesday, ...
-        tree_columns = ["Time"] + days
-        tree = ttk.Treeview(tab_frame, columns=tree_columns, show="headings", style="Timetable.Treeview")
+        # Day headers
+        for j, day in enumerate(days):
+            tk.Label(tab, text=day, font=("Helvetica", 10, "bold"), borderwidth=1, relief="solid").grid(row=0, column=j+1, sticky="nsew", padx=1, pady=1)
+        # Time column
+        for i, time_slot in enumerate(time_slots):
+            tk.Label(tab, text=time_slot, borderwidth=1, relief="solid", width=15).grid(row=i+1, column=0, sticky="nsew", padx=1, pady=1)
 
-        # Configure style
-        style = ttk.Style()
-        style.configure("Timetable.Treeview", rowheight=100)
-        style.configure("Timetable.Treeview.Heading", font=('Helvetica', 9, 'bold'))
+        # Cells
+        for i, time_slot in enumerate(time_slots):
+            for j, day in enumerate(days):
+                cell = tk.Frame(tab, borderwidth=1, relief="solid", bg="white", width=200, height=80)
+                cell.grid(row=i+1, column=j+1, sticky="nsew", padx=1, pady=1)
+                cell.grid_propagate(False)
+                cell.time_slot = time_slot
+                cell.day = day
+                cell.semester = semester
+                cell.section = section
+                # If there's data for this cell
+                if time_slot in data and day in data[time_slot]:
+                    lecture_details = data[time_slot][day][0]
+                    create_cell_content(cell, lecture_details)
+                cell.bind("<Button-1>", lambda e, c=cell: on_cell_click(c))
+                # Also bind click on label inside cell
+                cell.bindtags((str(cell), tab, "all"))
 
-        # Configure columns
-        tree.column("Time", width=120, anchor='center', stretch=tk.NO)
-        tree.heading("Time", text="Time")
-        for day in days:
-            tree.column(day, width=200, anchor='center')
-            tree.heading(day, text=day)
+        # Make grid expand
+        for i in range(len(time_slots)+1):
+            tab.grid_rowconfigure(i, weight=1)
+        for j in range(len(days)+1):
+            tab.grid_columnconfigure(j, weight=1)
 
-        # Add data rows: each row is a time slot, columns are days
-        for ts in time_slots:
-            row_data = [ts]
-            for day in days:
-                cell_content = "\n\n".join(data.get(ts, {}).get(day, []))
-                row_data.append(cell_content)
-            tree.insert("", "end", values=row_data)
+    def build_class_sem_groups_from_current():
+        groups = {}
+        for key_tuple, details in current_timetable.items():
+            section, semester, day, time = key_tuple
+            group_key = (semester, section)
+            if group_key not in groups:
+                groups[group_key] = {}
+            if time not in groups[group_key]:
+                groups[group_key][time] = {}
+            if day not in groups[group_key][time]:
+                groups[group_key][time][day] = []
+            groups[group_key][time][day].append(details)
+        return groups
 
-        # Add scrollbars
-        vsb = ttk.Scrollbar(tab_frame, orient="vertical", command=tree.yview)
-        hsb = ttk.Scrollbar(tab_frame, orient="horizontal", command=tree.xview)
-        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        # Grid layout
-        tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-
-        # Configure grid weights
-        tab_frame.grid_rowconfigure(0, weight=1)
-        tab_frame.grid_columnconfigure(0, weight=1)
+    # Export/Close buttons
+    btn_frame = tk.Frame(main_container, pady=10)
+    btn_frame.pack(fill="x", padx=20)
+    tk.Button(btn_frame, text="Export to PDF",
+             command=lambda: export_to_pdf(current_timetable, available_time_slots, build_class_sem_groups_from_current(),
+                                         timetable_metadata, display_title),
+             bg="#dc3545", fg="white", padx=15, pady=5, font=('Helvetica', 10)).pack(side="left", padx=10)
+    tk.Button(btn_frame, text="Close", command=win.destroy,
+             bg="#6c757d", fg="white", padx=15, pady=5, font=('Helvetica', 10)).pack(side="right", padx=10)
 
 
 def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_data, metadata, title):
