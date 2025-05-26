@@ -106,7 +106,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     tt_course_code_entry = ttk.Entry(left, font=normal_font)
     tt_course_code_entry.grid(row=4, column=3, sticky="ew", pady=5)
 
-    tk.Label(left, text="Indicators (e.g., Lab C):", bg="white", fg="#495057", font=normal_font).grid(row=5, column=0, pady=5, sticky="w")
+    tk.Label(left, text="Lab (e.g., Lab C):", bg="white", fg="#495057", font=normal_font).grid(row=5, column=0, pady=5, sticky="w")
     tt_indicators_entry = ttk.Entry(left, font=normal_font)
     tt_indicators_entry.grid(row=5, column=1, sticky="ew", pady=5, padx=(0,10))
 
@@ -125,7 +125,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     tree_container = tk.Frame(right, bg="#f8f9fa")
     tree_container.pack(fill="both", expand=True)
 
-    columns = ["Select","#", "Semester/Label", "Shift", "Class", "Teacher", "Course", "Code", "Indicators", "Room"]
+    columns = ["Select","#", "Semester/Label", "Shift", "Class", "Teacher", "Course", "Code", "Lab", "Room"]
     tt_treeview = ttk.Treeview(tree_container, columns=columns, show='headings', selectmode='browse')
 
     for col in columns:
@@ -138,7 +138,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
             tt_treeview.column(col, width=180, anchor='w')
         elif col == "Teacher":
             tt_treeview.column(col, width=120, anchor='w')
-        elif col == "Indicators":
+        elif col == "Lab":
             tt_treeview.column(col, width=100, anchor='center')
         elif col == "Semester/Label":
              tt_treeview.column(col, width=100, anchor='w')
@@ -260,7 +260,7 @@ def save_tt_entry():
 
     # Validation check
     if not all([teacher_name, course_name, course_code, room_name, class_section_name, semester_label, shift]):
-        messagebox.showwarning("Missing Fields", "All fields except Indicators must be filled.")
+        messagebox.showwarning("Missing Fields", "All fields except Lab must be filled.")
         return False
 
     if not teacher_name.replace(" ", "").isalpha():

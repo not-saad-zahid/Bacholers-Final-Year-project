@@ -86,6 +86,7 @@ class TimetableGeneticAlgorithm:
             section = entry['class_section']
             code = entry['course_code']
             course = entry['course_name']
+            semester_label = entry['semester']
             required = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
             
             if section not in lectures_by_section:
@@ -104,18 +105,21 @@ class TimetableGeneticAlgorithm:
         print(f"Total required lectures across all sections: {total_lectures}")
         print(f"Available unique time slots: {total_slots}")
         print("Lectures required by section:")
+        overbooked_sections = []
         for section, count in lectures_by_section.items():
             print(f"  Section {section}: {count} lectures")
             if count > total_slots:
                 print(f"  WARNING: Section {section} requires {count} lectures but only {total_slots} slots available")
+                overbooked_sections.append((section, count))
         
-        # Check individual course requirements
-        print("Detailed course requirements by section:")
-        for section, courses in lectures_by_section_course.items():
-            print(f"  Section {section}:")
-            for (course, code), required in courses.items():
-                print(f"    {course} ({code}): {required} lectures")
-        
+        # Show message box and raise exception if any section is overbooked
+        if overbooked_sections:
+            msg = "Cannot generate timetable:\n"
+            for section, count in overbooked_sections:
+                msg += f"'{semester_label}' '{section}' requires {count} lectures but only {total_slots} time slots are available.\n"
+            messagebox.showerror("Timetable Generation Error", msg)
+            raise ValueError(msg)
+
         # Print teacher workload
         print("\nTeacher assignments:")
         for teacher, courses in self.teacher_courses.items():

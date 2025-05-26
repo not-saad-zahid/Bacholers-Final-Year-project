@@ -126,7 +126,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     dt_course_code_entry.grid(row=current_row, column=3, sticky="w", pady=2, padx=(0,15))
     current_row += 1
 
-    tk.Label(dt_input_frame, text="Indicators (e.g. Lab C1):", bg="white", fg="#495057", font=normal_font).grid(row=current_row, column=0, sticky="w", pady=2)
+    tk.Label(dt_input_frame, text="Lab (e.g. Lab C1):", bg="white", fg="#495057", font=normal_font).grid(row=current_row, column=0, sticky="w", pady=2)
     dt_indicators_entry = ttk.Entry(dt_input_frame, font=normal_font, width=entry_field_char_width)
     # Changed sticky to "w"
     dt_indicators_entry.grid(row=current_row, column=1, sticky="w", pady=2, padx=(0,15))
@@ -192,7 +192,7 @@ def _create_treeview_in_tab(tab_frame, tab_id):
     tree_container.pack(fill="both", expand=True)
 
     # Add "S.No" as the first data column after the checkbox
-    columns = ("S.No", "Semester/Label", "Shift", "Class", "Teacher", "Course", "Code", "Indicators", "Room")
+    columns = ("S.No", "Semester/Label", "Shift", "Class", "Teacher", "Course", "Code", "Lab", "Room")
     tree = ttk.Treeview(tree_container, columns=columns, show='tree headings', selectmode='none' # selectmode='none' as we use checkboxes
     )
 
@@ -214,7 +214,7 @@ def _create_treeview_in_tab(tab_frame, tab_id):
         ("S.No", "S.No", 50),
         ("Semester/Label", "Semester/Label", 120), ("Shift", "Shift", 70),
         ("Class", "Class", 100), ("Teacher", "Teacher", 120), ("Course", "Course", 150),
-        ("Code", "Code", 70), ("Indicators", "Indicators", 100), ("Room", "Room", 70)
+        ("Code", "Code", 70), ("Lab", "Lab", 100), ("Room", "Room", 70)
     ]
     for col_id_text, text, width in col_configs:
         tree.heading(col_id_text, text=text)
