@@ -301,18 +301,19 @@ class TimetableGeneticAlgorithm:
         section_timeslots = {}
         teacher_timeslots = {}
         room_timeslots = {}
-        
+
         # Track all types of conflicts
         teacher_conflicts = 0
         section_conflicts = 0
         room_conflicts = 0
-        
+        teacher_conflict_details = []
+
         for key, details in timetable.items():
             section = details['class_section']
             time_slot = details['time_slot']
             teacher = details['teacher']
             room = details['room']
-            
+
             # Check section-timeslot conflicts
             if section not in section_timeslots:
                 section_timeslots[section] = {}
@@ -321,28 +322,42 @@ class TimetableGeneticAlgorithm:
                 print(f"WARNING: Conflicting timeslot {time_slot} for section {section}")
                 print(f"  - {section_timeslots[section][time_slot]['course_name']} vs {details['course_name']}")
             section_timeslots[section][time_slot] = details
-            
+
             # Check teacher-timeslot conflicts
             if teacher not in teacher_timeslots:
                 teacher_timeslots[teacher] = {}
             if time_slot in teacher_timeslots[teacher]:
                 teacher_conflicts += 1
+                teacher_conflict_details.append(
+                    (teacher, time_slot, teacher_timeslots[teacher][time_slot], details)
+                )
                 print(f"WARNING: Conflicting timeslot {time_slot} for teacher {teacher}")
                 print(f"  - {teacher_timeslots[teacher][time_slot]['course_name']} ({teacher_timeslots[teacher][time_slot]['class_section']}) vs {details['course_name']} ({details['class_section']})")
             teacher_timeslots[teacher][time_slot] = details
-            
+
             # Check room-timeslot conflicts
             room_key = f"{room}_{time_slot}"
             if room_key in room_timeslots:
                 room_conflicts += 1
                 print(f"WARNING: Room conflict at {time_slot} in room {room}")
             room_timeslots[room_key] = details
-        
-        # Report total conflicts
-        if teacher_conflicts > 0 or section_conflicts > 0 or room_conflicts > 0:
-            print(f"CONFLICT SUMMARY: {teacher_conflicts} teacher conflicts, {section_conflicts} section conflicts, {room_conflicts} room conflicts")
-        else:
-            print("No conflicts found in timetable.")
+
+        # If any teacher is double-booked, show error and stop
+        if teacher_conflicts > 0:
+            msg = "Cannot generate timetable:\n"
+            msg += "The following teacher(s) are assigned to more than one class at the same time:\n"
+            for teacher, time_slot, d1, d2 in teacher_conflict_details:
+                msg += (
+                    f"\nTeacher '{teacher}' has a conflict at '{time_slot}':\n"
+                    f"  - {d1['course_name']} (Section {d1['class_section']})\n"
+                    f"  - {d2['course_name']} (Section {d2['class_section']})\n"
+                )
+            # Add teacher workload info
+            msg += "\nTeacher workload summary:\n"
+            for teacher, slots in teacher_timeslots.items():
+                msg += f"  {teacher}: {len(slots)} lectures assigned\n"
+            messagebox.showerror("Timetable Generation Error", msg)
+            raise ValueError(msg)
         
         # Print teacher daily workload
         teacher_daily_load = {}

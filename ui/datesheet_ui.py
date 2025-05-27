@@ -632,7 +632,7 @@ def generate_datesheet_dialog():
     dialog = tk.Toplevel(root_window)
     dialog.title("Configure Date Sheet Generation")
     dialog.geometry("900x800")
-    dialog.resizable(False, False)
+    dialog.resizable(True, True)
     dialog.grab_set()
 
     # Center dialog

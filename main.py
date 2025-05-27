@@ -39,6 +39,7 @@ def main():
     root.title("Automatic Scheduler for GIGCCL")
     root.geometry("1280x720")
     root.state('zoomed')
+    root.resizable(True, True)
 
     # Define fonts
     title_font = tkfont.Font(family="Helvetica", size=18, weight="bold")

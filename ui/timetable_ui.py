@@ -3,6 +3,7 @@ from tkinter import messagebox, ttk, filedialog # Added filedialog
 import datetime
 import random # Not directly used in this snippet but often in GA context
 import sqlite3
+import os
 from datetime import datetime, timedelta
 from algorithms.timetable_ga import TimetableGeneticAlgorithm
 # Ensure timetable_db functions are correctly imported
@@ -47,6 +48,7 @@ timetable_title_var = None
 effective_date_var = None
 department_name_var = None
 checked_items = {}
+editing_indices = []
 
 def initialize(master, title_font, header_font, normal_font, button_font, return_home_func):
     global TT_header_frame, TT_frame, tt_treeview, root, conn
@@ -164,6 +166,8 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
               command=save_to_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
     tk.Button(db_frame, text="Load from DB", font=button_font, bg="#0d6efd", fg="white",
               command=load_from_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
+    tk.Button(db_frame, text="Erase All Database Data", font=button_font, bg="#dc3545", fg="white",
+          command=erase_all_database_data, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
 
     tt_generate_button = tk.Button(btn_frame, text="Generate Timetable", font=button_font, bg="#007bff", fg="white",
                                    command=generate_timetable_dialog, padx=10, pady=5, borderwidth=0)
@@ -191,41 +195,41 @@ def clear_all_tt_entries():
         messagebox.showinfo("Cleared", "All current entries have been cleared.")
 
 def edit_selected_entry():
-    global editing_index
-    
+    global editing_index, editing_indices
+
     # Get selected items from checkbox
     selected = [idx for idx, checked in checked_items.items() if checked]
     if not selected:
-        messagebox.showwarning("No Selection", "Please select an entry to edit using the checkbox.")
+        messagebox.showwarning("No Selection", "Please select entries to edit using the checkbox.")
         return
-    
-    if len(selected) > 1:
-        messagebox.showwarning("Multiple Selection", "Please select only one entry to edit.")
-        return
-    
+
     display_idx = selected[0]
-    
-    # Convert display index to actual timetable_entries index
+
+    # Get current filters
     current_semester_label = tt_semester_entry.get().strip()
     current_shift = shift_cb.get().strip()
-    
+    current_room = tt_room_entry.get().strip()
+
     if not current_shift:
         messagebox.showwarning("Missing Context", "Please select a shift first.")
         return
-    
-    # Get filtered entries (same logic as update_tt_treeview)
+
+    # Get filtered entries and their actual indices
     display_entries = []
     actual_indices = []
     for i, entry in enumerate(timetable_entries):
-        if (entry.get('shift') == current_shift and 
-            (not current_semester_label or entry.get('semester') == current_semester_label)):
+        if (entry.get('shift') == current_shift and
+            (not current_semester_label or entry.get('semester') == current_semester_label) and
+            (not current_room or str(entry.get('room_name', '')).strip() == current_room)):
             display_entries.append(entry)
             actual_indices.append(i)
-    
-    if 0 <= display_idx < len(display_entries):
-        actual_idx = actual_indices[display_idx]
-        entry_to_edit = timetable_entries[actual_idx]
-        
+
+    # Store all actual indices for saving
+    editing_indices = [actual_indices[idx] for idx in selected if 0 <= idx < len(display_entries)]
+
+    # Populate form with the first selected entry
+    if editing_indices:
+        entry_to_edit = timetable_entries[editing_indices[0]]
         clear_tt_form()
         tt_semester_entry.insert(0, entry_to_edit.get('semester', ''))
         shift_cb.set(entry_to_edit.get('shift', 'Morning'))
@@ -235,20 +239,15 @@ def edit_selected_entry():
         tt_course_code_entry.insert(0, entry_to_edit.get('course_code', ''))
         tt_indicators_entry.insert(0, entry_to_edit.get('course_indicators', ''))
         tt_room_entry.insert(0, str(entry_to_edit.get('room_name', '')))
-        
-        # Set editing_index to the actual index
-        editing_index = actual_idx
-        
-        # Clear checkbox selection after editing
-        checked_items.clear()
+        editing_index = editing_indices[0]
         update_tt_treeview()
     else:
         messagebox.showerror("Error", "Invalid selection.")
 
 def save_tt_entry():
-    global editing_index, timetable_entries
-    
-    # Get form values
+    global editing_index, editing_indices, timetable_entries
+
+    # Get form values (empty fields mean "do not change" for multi-edit)
     teacher_name = tt_teacher_entry.get().strip()
     course_name = tt_course_entry.get().strip()
     course_code = tt_course_code_entry.get().strip()
@@ -258,63 +257,89 @@ def save_tt_entry():
     semester_label = tt_semester_entry.get().strip()
     shift = shift_cb.get().strip()
 
-    # Validation check
-    if not all([teacher_name, course_name, course_code, room_name, class_section_name, semester_label, shift]):
+    # For single entry add/edit, require all fields except Lab
+    if not editing_indices and (not all([teacher_name, course_name, course_code, room_name, class_section_name, semester_label, shift])):
         messagebox.showwarning("Missing Fields", "All fields except Lab must be filled.")
         return False
 
-    if not teacher_name.replace(" ", "").isalpha():
+    # Validation for fields that are filled (for multi-edit, only validate non-empty fields)
+    if teacher_name and not teacher_name.replace(" ", "").isalpha():
         messagebox.showwarning("Invalid Teacher Name", "Teacher name should primarily contain letters.")
         return False
-    if not course_code.isalnum() and '-' not in course_code:
+    if course_code and not (course_code.isalnum() or '-' in course_code):
         messagebox.showwarning("Invalid Course Code", "Course code should be alphanumeric (e.g., CS101, CC-214).")
         return False
-    try:
-        int(room_name)
-    except ValueError:
-        messagebox.showwarning("Invalid Room", "Room should be a number (e.g., 71).")
+    if room_name:
+        try:
+            int(room_name)
+        except ValueError:
+            messagebox.showwarning("Invalid Room", "Room should be a number (e.g., 71).")
+            return False
+    if class_section_name and not class_section_name.replace(" ", "").isalnum():
+        messagebox.showwarning("Invalid Class/Section", "Class/Section must be alphanumeric (e.g., BSCS G1, A).")
         return False
-    if not class_section_name.replace(" ", "").isalnum():
-         messagebox.showwarning("Invalid Class/Section", "Class/Section must be alphanumeric (e.g., BSCS G1, A).")
-         return False
 
-    entry_data = {
-        "teacher_name": teacher_name,
-        "course_name": course_name,
-        "course_code": course_code,
-        "course_indicators": indicators,
-        "room_name": room_name,
-        "class_section_name": class_section_name,
-        "semester": semester_label,
-        "shift": shift,
-        "teacher_id": None,
-        "course_id": None,
-        "room_id": None,
-        "class_section_id": None
-    }
-
-    if editing_index is not None and 0 <= editing_index < len(timetable_entries):
-        # Update existing entry
-        timetable_entries[editing_index] = entry_data
+    # If multiple editing, update only non-empty fields in all selected entries
+    if editing_indices:
+        for idx in editing_indices:
+            if 0 <= idx < len(timetable_entries):
+                entry = timetable_entries[idx]
+                if teacher_name: entry["teacher_name"] = teacher_name
+                if course_name: entry["course_name"] = course_name
+                if course_code: entry["course_code"] = course_code
+                if indicators: entry["course_indicators"] = indicators
+                if room_name: entry["room_name"] = room_name
+                if class_section_name: entry["class_section_name"] = class_section_name
+                if semester_label: entry["semester"] = semester_label
+                if shift: entry["shift"] = shift
         action = "updated"
-        editing_index = None  # Reset editing index
+        editing_indices.clear()
+        editing_index = None
+    elif editing_index is not None and 0 <= editing_index < len(timetable_entries):
+        # Single edit: require all fields
+        timetable_entries[editing_index] = {
+            "teacher_name": teacher_name,
+            "course_name": course_name,
+            "course_code": course_code,
+            "course_indicators": indicators,
+            "room_name": room_name,
+            "class_section_name": class_section_name,
+            "semester": semester_label,
+            "shift": shift,
+            "teacher_id": None,
+            "course_id": None,
+            "room_id": None,
+            "class_section_id": None
+        }
+        action = "updated"
+        editing_index = None
     else:
-        # Add new entry
-        timetable_entries.append(entry_data)
+        # Add new entry: require all fields
+        timetable_entries.append({
+            "teacher_name": teacher_name,
+            "course_name": course_name,
+            "course_code": course_code,
+            "course_indicators": indicators,
+            "room_name": room_name,
+            "class_section_name": class_section_name,
+            "semester": semester_label,
+            "shift": shift,
+            "teacher_id": None,
+            "course_id": None,
+            "room_id": None,
+            "class_section_id": None
+        })
         action = "added"
 
-    # Clear form and reset states
     clear_tt_form()
-    checked_items.clear()  # Clear checkbox selections
-    
-    # Update display
+    checked_items.clear()
     update_tt_treeview()
-    messagebox.showinfo("Success", f"Entry {action} successfully.")
+    messagebox.showinfo("Success", f"Entry/Entries {action} successfully.")
     return True
 
 
 def save_timetable_from_treeview():
-    global timetable_entries # Removed conn from here as it's not passed.
+    global timetable_entries
 
     current_semester_label = tt_semester_entry.get().strip()
     current_shift = shift_cb.get().strip()
@@ -337,16 +362,27 @@ def save_timetable_from_treeview():
         messagebox.showinfo("No Data", f"No entries found in the current view for {context_msg} to save to DB.")
         return
 
-    if not messagebox.askyesno("Confirm Save", f"Save {len(entries_to_save)} entries for {context_msg} to the database?"):
+    if not messagebox.askyesno("Confirm Save", f"All existing entries for {context_msg} will be replaced in the database. Continue?"):
+        return
+
+    # --- NEW: Delete existing entries for this context ---
+    try:
+        cur = conn.cursor()
+        if current_semester_label:
+            cur.execute("DELETE FROM timetable WHERE shift = ? AND semester = ?", (current_shift, current_semester_label))
+        else:
+            cur.execute("DELETE FROM timetable WHERE shift = ?", (current_shift,))
+        conn.commit()
+    except Exception as e:
+        messagebox.showerror("Database Error", f"Failed to clear old entries: {e}")
         return
 
     saved_count = 0
     failed_count = 0
-    
-    with conn: # This uses the 'conn' from timetable_ui.py's global scope
+
+    with conn:
         for entry in entries_to_save:
             try:
-                # MODIFICATION: Removed 'conn' argument from calls to fetch_id_from_name
                 teacher_id = fetch_id_from_name("teachers", entry["teacher_name"])
                 course_id = fetch_id_from_name("courses", entry["course_name"],
                                                teacher_id=teacher_id,
@@ -361,34 +397,23 @@ def save_timetable_from_treeview():
                     failed_count +=1
                     continue
 
-                cur = conn.cursor() # Using timetable_ui.py's conn for this check
-                cur.execute('''SELECT id FROM timetable WHERE
-                               teacher_id = ? AND course_id = ? AND room_id = ? AND
-                               class_section_id = ? AND semester = ? AND shift = ?''',
-                            (teacher_id, course_id, room_id, class_section_id, entry["semester"], entry["shift"]))
-                if cur.fetchone():
-                    print(f"Entry for {entry['course_name']} already exists in DB. Skipping.")
-                    failed_count +=1
-                    continue
-
-                # Using timetable_ui.py's conn for insert
                 conn.execute('''
                     INSERT INTO timetable (teacher_id, course_id, room_id, class_section_id, semester, shift)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (teacher_id, course_id, room_id, class_section_id, entry["semester"], entry["shift"]))
                 saved_count += 1
-            except sqlite3.Error as e: # This will catch errors from operations using timetable_ui.py's conn
+            except sqlite3.Error as e:
                 messagebox.showerror("Database Error", f"Error saving entry {entry['course_name']}: {e}")
                 failed_count +=1
-            except Exception as e: # This will catch errors from fetch_id_from_name if they propagate
+            except Exception as e:
                 messagebox.showerror("Unexpected Error", f"Error processing entry {entry['course_name']}: {e}")
                 failed_count +=1
 
     if saved_count > 0:
-        conn.commit() # Commit changes made via timetable_ui.py's conn
+        conn.commit()
         messagebox.showinfo("Success", f"{saved_count} entries saved to database for {context_msg}.")
     if failed_count > 0:
-        messagebox.showwarning("Save Incomplete", f"{failed_count} entries could not be saved or were duplicates.")
+        messagebox.showwarning("Save Incomplete", f"{failed_count} entries could not be saved.")
     if saved_count == 0 and failed_count == 0 :
         messagebox.showinfo("No Action", "No new entries to save to the database for the current view.")
 
@@ -406,28 +431,22 @@ def clear_tt_form():
 
 def on_treeview_click(event):
     global checked_items
-    
+
     region = tt_treeview.identify("region", event.x, event.y)
     if region == "cell":
         row_id = tt_treeview.identify_row(event.y)
         col = tt_treeview.identify_column(event.x)
-        
+
         if col == "#1" and row_id:  # "Select" column
             try:
                 # Convert row_id to integer (display index)
                 display_idx = int(row_id)
-                
-                # Toggle checkbox state
+
+                # Toggle checkbox state (allow multiple selection)
                 checked_items[display_idx] = not checked_items.get(display_idx, False)
-                
-                # If we're checking this item, uncheck all others (single selection)
-                if checked_items[display_idx]:
-                    for key in list(checked_items.keys()):
-                        if key != display_idx:
-                            checked_items[key] = False
-                
+
                 update_tt_treeview()
-                
+
             except (ValueError, IndexError):
                 print(f"Error handling click on row_id: {row_id}")
 
@@ -478,71 +497,58 @@ def update_tt_treeview():
 
 def delete_tt_entry():
     global timetable_entries, editing_index, checked_items
-    
+
     # Get selected items from checkbox
     selected = [idx for idx, checked in checked_items.items() if checked]
-    
+
     if not selected:
-        messagebox.showwarning("Selection Error", "Please select an entry to delete using the checkbox.")
+        messagebox.showwarning("Selection Error", "Please select entries to delete using the checkbox.")
         return False
-    
-    if len(selected) > 1:
-        messagebox.showwarning("Multiple Selection", "Please select only one entry to delete.")
-        return False
-        
-    display_idx = selected[0]
-    
-    # Convert display index to actual timetable_entries index
+
+    # Get current filters
     current_semester_label = tt_semester_entry.get().strip()
     current_shift = shift_cb.get().strip()
-    
+    current_room = tt_room_entry.get().strip()
+
     if not current_shift:
         messagebox.showwarning("Missing Context", "Please select a shift first.")
         return False
-    
+
     # Get filtered entries and their actual indices
     display_entries = []
     actual_indices = []
     for i, entry in enumerate(timetable_entries):
-        if (entry.get('shift') == current_shift and 
-            (not current_semester_label or entry.get('semester') == current_semester_label)):
+        if (entry.get('shift') == current_shift and
+            (not current_semester_label or entry.get('semester') == current_semester_label) and
+            (not current_room or str(entry.get('room_name', '')).strip() == current_room)):
             display_entries.append(entry)
             actual_indices.append(i)
-    
-    if 0 <= display_idx < len(display_entries):
-        actual_idx = actual_indices[display_idx]
-        
-        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this entry?"):
+
+    # Sort selected indices in reverse so we can safely pop from the list
+    selected_sorted = sorted(selected, reverse=True)
+    deleted_count = 0
+    for display_idx in selected_sorted:
+        if 0 <= display_idx < len(display_entries):
+            actual_idx = actual_indices[display_idx]
             entry = timetable_entries[actual_idx]
-            
+
             # Delete from database if entry has an ID
             if 'entry_id' in entry:
                 from db.timetable_db import delete_timetable_entry_from_db
-                if delete_timetable_entry_from_db(entry['entry_id']):
-                    print(f"Entry {entry['entry_id']} deleted from database")
-                else:
-                    print(f"Warning: Could not delete entry {entry['entry_id']} from database")
-            
-            # Remove from local list
+                delete_timetable_entry_from_db(entry['entry_id'])
+
             timetable_entries.pop(actual_idx)
-            
-            # Update editing_index if necessary
-            if editing_index is not None:
-                if editing_index == actual_idx:
-                    editing_index = None
-                    clear_tt_form()
-                elif editing_index > actual_idx:
-                    editing_index -= 1
-            
-            # Clear checkbox selections and update display
-            checked_items.clear()
-            update_tt_treeview()
-            messagebox.showinfo("Success", "Entry deleted successfully.")
-            return True
-    else:
-        messagebox.showerror("Error", "Invalid selection index.")
-    
-    return False
+            deleted_count += 1
+
+            # Adjust actual_indices for subsequent deletions
+            for j in range(len(actual_indices)):
+                if actual_indices[j] > actual_idx:
+                    actual_indices[j] -= 1
+
+    checked_items.clear()
+    update_tt_treeview()
+    messagebox.showinfo("Success", f"{deleted_count} entr{'y' if deleted_count == 1 else 'ies'} deleted successfully.")
+    return True
 
 
 def edit_tt_entry(event):
@@ -612,14 +618,30 @@ def clear_selection(event):
             checked_items.clear()
             update_tt_treeview()
 
+def erase_all_database_data():
+    if not messagebox.askyesno("Confirm Erase", "Are you sure you want to erase ALL data from the database? This cannot be undone."):
+        return
+    try:
+        from db.timetable_db import conn
+        cur = conn.cursor()
+        # Delete from child table first, then parents
+        cur.execute("DELETE FROM timetable")
+        cur.execute("DELETE FROM class_sections")
+        cur.execute("DELETE FROM courses")
+        cur.execute("DELETE FROM teachers")
+        cur.execute("DELETE FROM rooms")
+        conn.commit()
+        messagebox.showinfo("Success", "All data erased from the database.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Could not erase all data:\n{e}")
 
 def generate_timetable_dialog():
     global college_name_var, timetable_title_var, effective_date_var, department_name_var
 
     dialog = tk.Toplevel(root)
     dialog.title("Configure Timetable Generation")
-    dialog.geometry("800x700")
-    dialog.resizable(False, False)
+    dialog.geometry("650x720")
+    dialog.resizable(True, True)
 
     dialog.update_idletasks()
     x = (root.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
@@ -679,17 +701,62 @@ def generate_timetable_dialog():
     day_vars = {}
     days_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
     for i, day_text in enumerate(days_options):
-        var = tk.BooleanVar(value=True if day_text != "Saturday" else False)
+        var = tk.BooleanVar(value=True)
         cb_day = ttk.Checkbutton(days_frame, text=day_text, variable=var)
         cb_day.pack(side="left", padx=2)
         day_vars[day_text] = var
 
-    # --- Fetch all courses from the database for dropdown ---
+    # --- Fetch all class sections/semesters from the database for dropdown ---
     from db.timetable_db import conn as db_conn
     cur = db_conn.cursor()
+    cur.execute("SELECT DISTINCT semester, name FROM class_sections")
+    class_section_list = cur.fetchall()
+    # Build options like "Semester1 - BSCS G1"
+    class_section_options = [f"{sem} - {name}" for sem, name in class_section_list]
+
+    # Add a dropdown for selecting class section/semester
+    tk.Label(main_frame, text="Class Section/Semester:").grid(row=14, column=0, sticky="w", pady=5)
+    selected_class_section_var = tk.StringVar()
+    class_section_cb = ttk.Combobox(main_frame, textvariable=selected_class_section_var, values=class_section_options, width=35, state="readonly")
+    class_section_cb.grid(row=14, column=1, sticky="w", pady=5)
+
+    # --- Fetch all courses from the database for dropdown ---
+    def get_courses_for_class_section(class_section_str):
+        # Parse semester and section name
+        try:
+            semester, section_name = class_section_str.split(" - ", 1)
+        except ValueError:
+            return []
+        cur = db_conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT c.code, c.name
+            FROM courses c
+            JOIN timetable t ON t.course_id = c.id
+            JOIN class_sections cs ON t.class_section_id = cs.id
+            WHERE cs.semester = ? AND cs.name = ?
+        """, (semester.strip(), section_name.strip()))
+        course_list = cur.fetchall()
+        # Only unique (code, name) pairs
+        seen = set()
+        unique_course_list = []
+        for code, name in course_list:
+            key = (code.strip(), name.strip())
+            if key not in seen:
+                seen.add(key)
+                unique_course_list.append(key)
+        return [f"{code} - {name}" for code, name in unique_course_list]
+
+    # Default: show all courses if no class section selected
     cur.execute("SELECT code, name FROM courses")
     course_list = cur.fetchall()
-    course_options = [f"{code} - {name}" for code, name in course_list]
+    seen = set()
+    unique_course_list = []
+    for code, name in course_list:
+        key = (code.strip(), name.strip())
+        if key not in seen:
+            seen.add(key)
+            unique_course_list.append(key)
+    course_options = [f"{code} - {name}" for code, name in unique_course_list]
 
     # Add a frame for course-specific exceptions
     tk.Label(main_frame, text="Course Exceptions", font=("Helvetica", 12, "bold")).grid(row=15, column=0, columnspan=2, sticky="w", pady=(10,5))
@@ -721,6 +788,18 @@ def generate_timetable_dialog():
     course_cb = ttk.Combobox(entry_frame, textvariable=selected_course_var, values=course_options, width=35, state="readonly")
     course_cb.grid(row=0, column=0, padx=5)
     ttk.Combobox(entry_frame, textvariable=freq_var, values=["1", "2", "3", "4"], width=5).grid(row=0, column=1, padx=5)
+
+    def update_course_options(*args):
+        class_section_str = selected_class_section_var.get()
+        if class_section_str:
+            new_options = get_courses_for_class_section(class_section_str)
+            course_cb['values'] = new_options
+            selected_course_var.set("")
+        else:
+            course_cb['values'] = course_options
+            selected_course_var.set("")
+
+    selected_class_section_var.trace_add("write", update_course_options)
 
     def add_exception():
         course_str = selected_course_var.get()
