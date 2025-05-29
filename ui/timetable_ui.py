@@ -23,9 +23,12 @@ try:
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.lib import colors as reportlab_colors
     from reportlab.lib.units import inch
+    import pandas as pd
     REPORTLAB_AVAILABLE = True
+    PANDAS_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
+    PANDAS_AVAILABLE = False
 
 # Global variables
 timetable_entries = []
@@ -123,6 +126,9 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
 
     tk.Button(left, text="Edit Entry", font=button_font, bg="#ffc107", fg="black",
             command=edit_selected_entry, padx=10, pady=5, borderwidth=0).grid(row=6, column=1, pady=15, sticky="w")
+    
+    tk.Button(left, text="Remove Entry", font=button_font, bg="#fd7e14", fg="white",
+            command=remove_selected_entry_from_treeview, padx=10, pady=5, borderwidth=0).grid(row=6, column=2, pady=15, sticky="w")
 
     tk.Label(right, text="Saved Timetable Entries", bg="#f8f9fa", fg="#212529", font=header_font).pack(anchor="w", pady=5)
     tree_container = tk.Frame(right, bg="#f8f9fa")
@@ -245,6 +251,46 @@ def edit_selected_entry():
         update_tt_treeview()
     else:
         messagebox.showerror("Error", "Invalid selection.")
+
+def remove_selected_entry_from_treeview():
+    global timetable_entries, checked_items
+    # Get selected items from checkbox
+    selected = [idx for idx, checked in checked_items.items() if checked]
+    if not selected:
+        messagebox.showwarning("Selection Error", "Please select entries to remove using the checkbox.")
+        return
+    # Get current filters
+    current_semester_label = tt_semester_entry.get().strip()
+    current_shift = shift_cb.get().strip()
+    current_room = tt_room_entry.get().strip()
+    if not current_shift:
+        messagebox.showwarning("Missing Context", "Please select a shift first.")
+        return
+    # Get filtered entries and their actual indices
+    display_entries = []
+    actual_indices = []
+    for i, entry in enumerate(timetable_entries):
+        if (entry.get('shift') == current_shift and
+            (not current_semester_label or entry.get('semester') == current_semester_label) and
+            (not current_room or str(entry.get('room_name', '')).strip() == current_room)):
+            display_entries.append(entry)
+            actual_indices.append(i)
+    # Sort selected indices in reverse so we can safely pop from the list
+    selected_sorted = sorted(selected, reverse=True)
+    removed_count = 0
+    for display_idx in selected_sorted:
+        if 0 <= display_idx < len(display_entries):
+            actual_idx = actual_indices[display_idx]
+            timetable_entries.pop(actual_idx)
+            removed_count += 1
+            # Adjust actual_indices for subsequent deletions
+            for j in range(len(actual_indices)):
+                if actual_indices[j] > actual_idx:
+                    actual_indices[j] -= 1
+    checked_items.clear()
+    update_tt_treeview()
+    messagebox.showinfo("Removed", f"{removed_count} entr{'y' if removed_count == 1 else 'ies'} removed from the list.")
+
 
 def save_tt_entry():
     global editing_index, editing_indices, timetable_entries
@@ -468,8 +514,9 @@ def update_tt_treeview():
 
     # Filter entries for display
     display_entries = []
+    display_to_actual = []
     if current_shift:
-        for e in timetable_entries:
+        for idx, e in enumerate(timetable_entries):
             teacher_name = e.get('teacher_name', '').lower()
             if (
                 e.get('shift') == current_shift and
@@ -478,6 +525,7 @@ def update_tt_treeview():
                 (not current_teacher or current_teacher in teacher_name)
             ):
                 display_entries.append(e)
+                display_to_actual.append(idx)
 
     # Clean up checked_items to only include valid indices
     max_display_idx = len(display_entries) - 1
@@ -500,6 +548,39 @@ def update_tt_treeview():
             entry.get('room_name', 'N/A')
         )
         tt_treeview.insert('', 'end', values=values_to_insert, iid=str(i))
+
+    # Store mapping for use in edit/remove
+    tt_treeview.display_to_actual = display_to_actual
+
+def edit_selected_entry():
+    global editing_index, editing_indices
+
+    # Get selected items from checkbox
+    selected = [idx for idx, checked in checked_items.items() if checked]
+    if not selected:
+        messagebox.showwarning("No Selection", "Please select entries to edit using the checkbox.")
+        return
+
+    # Use the mapping from displayed indices to actual indices
+    display_to_actual = getattr(tt_treeview, "display_to_actual", [])
+    editing_indices = [display_to_actual[idx] for idx in selected if 0 <= idx < len(display_to_actual)]
+
+    # Populate form with the first selected entry
+    if editing_indices:
+        entry_to_edit = timetable_entries[editing_indices[0]]
+        clear_tt_form()
+        tt_semester_entry.insert(0, entry_to_edit.get('semester', ''))
+        shift_cb.set(entry_to_edit.get('shift', 'Morning'))
+        tt_class_entry.insert(0, entry_to_edit.get('class_section_name', ''))
+        tt_teacher_entry.insert(0, entry_to_edit.get('teacher_name', ''))
+        tt_course_entry.insert(0, entry_to_edit.get('course_name', ''))
+        tt_course_code_entry.insert(0, entry_to_edit.get('course_code', ''))
+        tt_indicators_entry.insert(0, entry_to_edit.get('course_indicators', ''))
+        tt_room_entry.insert(0, str(entry_to_edit.get('room_name', '')))
+        editing_index = editing_indices[0]
+        update_tt_treeview()
+    else:
+        messagebox.showerror("Error", "Invalid selection.")
 
 def delete_tt_entry():
     global timetable_entries, editing_index, checked_items
@@ -1144,6 +1225,11 @@ def display_timetable(optimized_timetable_data, available_time_slots,
              command=lambda: export_to_pdf(current_timetable, available_time_slots, build_sem_sec_groups_from_current(),
                                          timetable_metadata, display_title),
              bg="#dc3545", fg="white", padx=15, pady=5, font=('Helvetica', 10)).pack(side="left", padx=10)
+    
+    tk.Button(btn_frame, text="Export to Excel",
+             command=lambda: export_to_excel_generated(current_timetable, available_time_slots, build_sem_sec_groups_from_current(), timetable_metadata, display_title),
+             bg="#28a745", fg="white", padx=15, pady=5, font=('Helvetica', 10)).pack(side="left", padx=10)
+    
     tk.Button(btn_frame, text="Close", command=win.destroy,
              bg="#6c757d", fg="white", padx=15, pady=5, font=('Helvetica', 10)).pack(side="right", padx=10)
 
@@ -1170,9 +1256,15 @@ def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_dat
         styles['h1'].alignment = 1
         story.append(Paragraph(metadata.get("college_name", ""), styles['h1']))
         story.append(Paragraph(title, styles['h2']))
+        story.append(Paragraph(f"Effective Date: {metadata.get('effective_date', '')}", styles['Normal']))
+        story.append(Paragraph(f"Department: {metadata.get('department_name', '')}", styles['Normal']))
         story.append(Spacer(1, 0.2*inch))
 
-        for class_key in grouped_display_data.keys():
+        class_keys = list(grouped_display_data.keys())
+        num_classes = len(class_keys)
+        per_page = 2
+
+        for idx, class_key in enumerate(class_keys):
             semester, section = class_key
 
             # Determine the specific room for this class/section
@@ -1196,13 +1288,11 @@ def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_dat
             header_row = ["Time"] + days
             table_data.append(header_row)
 
-            # Simply display the data as generated by GA
             for time_slot in time_slots:
                 row = [time_slot]
                 for day in days:
                     cell_content = ""
                     full_slot = f"{day} {time_slot}"
-                    
                     for key, details in optimized_timetable_data.items():
                         if (details['time_slot'] == full_slot and 
                             details['class_section'] == section and 
@@ -1217,8 +1307,6 @@ def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_dat
             # Create and style the table
             col_widths = [2*inch] + [3*inch] * len(days)
             table = Table(table_data, colWidths=col_widths, rowHeights=[0.4*inch] + [1.2*inch] * len(time_slots))
-            
-            # Enhanced table styling
             style = TableStyle([
                 ('GRID', (0,0), (-1,-1), 1, reportlab_colors.black),
                 ('BOX', (0,0), (-1,-1), 2, reportlab_colors.black),
@@ -1237,6 +1325,11 @@ def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_dat
             story.append(table)
             story.append(Spacer(1, 0.5*inch))
 
+            # Add page break after every 2 timetables, except after the last one
+            if (idx + 1) % per_page == 0 and (idx + 1) < num_classes:
+                from reportlab.platypus import PageBreak
+                story.append(PageBreak())
+
         doc.build(story)
         messagebox.showinfo("Success", f"Timetable exported to {filepath}")
 
@@ -1245,6 +1338,62 @@ def export_to_pdf(optimized_timetable_data, time_slots_cols, grouped_display_dat
         import traceback
         traceback.print_exc()
 
+def export_to_excel_generated(current_timetable, available_time_slots, grouped_display_data, metadata, title):
+    if not PANDAS_AVAILABLE:
+        messagebox.showerror("Missing Library", "Pandas library is not installed.")
+        return
+
+    filepath = filedialog.asksaveasfilename(
+        defaultextension=".xlsx",
+        filetypes=[("Excel files", "*.xlsx")],
+        title="Save Timetable as Excel"
+    )
+    if not filepath:
+        return
+
+    try:
+        with pd.ExcelWriter(filepath, engine='xlsxwriter') as writer:
+            for (semester, section), data in grouped_display_data.items():
+                # Prepare table data
+                time_slots = sorted(list(set(slot.split(" ", 1)[1] for slot in available_time_slots)))
+                days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+                table_data = []
+                header_row = ["Time"] + days
+                table_data.append(header_row)
+                for time_slot in time_slots:
+                    row = [time_slot]
+                    for day in days:
+                        cell_content = ""
+                        if time_slot in data and day in data[time_slot]:
+                            details = data[time_slot][day][0]
+                            cell_content = (
+                                            f"{details['course_name']}\n"
+                                            f"({details['course_code']})\n"
+                                            f"{details.get('course_indicators', '')}\n"
+                                            f"{details['teacher']}\n"
+                                        )
+                        row.append(cell_content)
+                    table_data.append(row)
+                df = pd.DataFrame(table_data[1:], columns=table_data[0])
+                sheet_name = f"{section}-{semester}"[:31]
+                # Write DataFrame starting from row 5 (to leave space for metadata)
+                df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=5)
+                worksheet = writer.sheets[sheet_name]
+                # Write metadata in the first rows
+                worksheet.write(0, 0, metadata.get("college_name", ""))
+                worksheet.write(1, 0, title)
+                worksheet.write(2, 0, f"Effective Date: {metadata.get('effective_date', '')}")
+                worksheet.write(3, 0, f"Department: {metadata.get('department_name', '')}")
+                # Find the room for this section/semester
+                room_for_this_section = "N/A"
+                for details in current_timetable.values():
+                    if details['class_section'] == section and details.get('semester') == semester:
+                        room_for_this_section = str(details['room'])
+                        break
+                worksheet.write(4, 0, f"Semester: {semester}, Section: {section}, Room: {room_for_this_section}")
+        messagebox.showinfo("Success", f"Timetable exported to {filepath}")
+    except Exception as e:
+        messagebox.showerror("Export Failed", f"Could not export to Excel: {e}")
 
 def save_to_db_ui():
     save_timetable_from_treeview()
