@@ -99,6 +99,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     tk.Label(left, text="Teacher Name:", bg="white", fg="#495057", font=normal_font).grid(row=3, column=2, pady=5, sticky="w")
     tt_teacher_entry = ttk.Entry(left, font=normal_font)
     tt_teacher_entry.grid(row=3, column=3, sticky="ew", pady=5)
+    tt_teacher_entry.bind('<KeyRelease>', lambda event: update_tt_treeview())
 
     tk.Label(left, text="Course Name:", bg="white", fg="#495057", font=normal_font).grid(row=4, column=0, pady=5, sticky="w")
     tt_course_entry = ttk.Entry(left, font=normal_font)
@@ -157,16 +158,17 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
 
     tk.Button(btn_frame, text="Delete Selected", font=button_font, bg="#dc3545", fg="white",
               command=delete_tt_entry, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
+    
     tk.Button(btn_frame, text="Clear All Entries", font=button_font, bg="#6c757d", fg="white",
               command=clear_all_tt_entries, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-
-    db_frame = tk.Frame(right, bg="#f8f9fa")
-    db_frame.pack(fill='x', pady=5)
-    tk.Button(db_frame, text="Save Entries to DB", font=button_font, bg="#198754", fg="white",
+    
+    tk.Button(btn_frame, text="Save Entries to DB", font=button_font, bg="#198754", fg="white",
               command=save_to_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    tk.Button(db_frame, text="Load from DB", font=button_font, bg="#0d6efd", fg="white",
+    
+    tk.Button(btn_frame, text="Load from DB", font=button_font, bg="#0d6efd", fg="white",
               command=load_from_db_ui, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
-    tk.Button(db_frame, text="Erase All Database Data", font=button_font, bg="#dc3545", fg="white",
+    
+    tk.Button(btn_frame, text="Erase All Database Data", font=button_font, bg="#dc3545", fg="white",
           command=erase_all_database_data, padx=10, pady=5, borderwidth=0).pack(side='left', padx=5)
 
     tt_generate_button = tk.Button(btn_frame, text="Generate Timetable", font=button_font, bg="#007bff", fg="white",
@@ -331,10 +333,8 @@ def save_tt_entry():
         })
         action = "added"
 
-    clear_tt_form()
     checked_items.clear()
     update_tt_treeview()
-    messagebox.showinfo("Success", f"Entry/Entries {action} successfully.")
     return True
 
 
@@ -453,9 +453,10 @@ def on_treeview_click(event):
 def on_room_filter_change(event=None):
     update_tt_treeview()
 
+
 def update_tt_treeview():
     global timetable_entries, tt_treeview, checked_items
-    
+
     # Clear existing items
     for item in tt_treeview.get_children():
         tt_treeview.delete(item)
@@ -463,14 +464,19 @@ def update_tt_treeview():
     current_semester_label = tt_semester_entry.get().strip()
     current_shift = shift_cb.get().strip()
     current_room = tt_room_entry.get().strip()  # Get current room filter
+    current_teacher = tt_teacher_entry.get().strip().lower()  # Get current teacher filter
 
     # Filter entries for display
     display_entries = []
     if current_shift:
         for e in timetable_entries:
-            if e.get('shift') == current_shift and \
-               (not current_semester_label or e.get('semester') == current_semester_label) and \
-               (not current_room or str(e.get('room_name', '')).strip() == current_room):  # Add room filter
+            teacher_name = e.get('teacher_name', '').lower()
+            if (
+                e.get('shift') == current_shift and
+                (not current_semester_label or e.get('semester') == current_semester_label) and
+                (not current_room or str(e.get('room_name', '')).strip() == current_room) and
+                (not current_teacher or current_teacher in teacher_name)
+            ):
                 display_entries.append(e)
 
     # Clean up checked_items to only include valid indices
@@ -648,8 +654,24 @@ def generate_timetable_dialog():
     y = (root.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
     dialog.geometry(f'+{x}+{y}')
 
-    main_frame = tk.Frame(dialog, padx=20, pady=20)
-    main_frame.pack(fill="both", expand=True)
+    # --- Add a canvas + scrollbar for vertical scrolling ---
+    canvas = tk.Canvas(dialog, borderwidth=0, highlightthickness=0)
+    vscroll = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=vscroll.set)
+    vscroll.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+
+    main_frame = tk.Frame(canvas, padx=20, pady=20)
+    canvas.create_window((0, 0), window=main_frame, anchor="nw")
+
+    def on_configure(event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+    main_frame.bind("<Configure>", on_configure)
+
+    # Enable mousewheel scrolling
+    def _on_mousewheel(event):
+        canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
     tk.Label(main_frame, text="Timetable Metadata", font=("Helvetica", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0,10))
 
@@ -951,13 +973,13 @@ def display_timetable(optimized_timetable_data, available_time_slots,
     win.state('zoomed')
 
     # --- Track current timetable state for export ---
-        # --- Track current timetable state for export ---
     current_timetable = {}
     for key_tuple, details in optimized_timetable_data.items():
         day, time = details['time_slot'].split(" ", 1)
         section = details['class_section']
         semester = details.get('semester', 'N/A')
-        current_timetable[(section, semester, day, time)] = details.copy()
+        # Use (semester, section, day, time) as key
+        current_timetable[(semester, section, day, time)] = details.copy()
 
     # --- Helper state for selection ---
     selected_cell = {"widget": None}
@@ -1045,20 +1067,20 @@ def display_timetable(optimized_timetable_data, available_time_slots,
     tk.Label(meta_frame, text=f"Department: {timetable_metadata.get('department_name', 'N/A')}", font=("Helvetica", 10, "italic")).pack()
     ttk.Separator(main_container, orient='horizontal').pack(fill='x', padx=20, pady=5)
 
-    # Group data by class and semester
-    class_sem_groups = {}
+    # Group data by (semester, section)
+    sem_sec_groups = {}
     for key_tuple, details in optimized_timetable_data.items():
-        class_sec = key_tuple[1]
         semester = details.get('semester', 'N/A')
-        group_key = (semester, class_sec)
-        if group_key not in class_sem_groups:
-            class_sem_groups[group_key] = {}
+        section = details['class_section']
+        group_key = (semester, section)
+        if group_key not in sem_sec_groups:
+            sem_sec_groups[group_key] = {}
         day, time = details['time_slot'].split(" ", 1)
-        if time not in class_sem_groups[group_key]:
-            class_sem_groups[group_key][time] = {}
-        if day not in class_sem_groups[group_key][time]:
-            class_sem_groups[group_key][time][day] = []
-        class_sem_groups[group_key][time][day].append(details)
+        if time not in sem_sec_groups[group_key]:
+            sem_sec_groups[group_key][time] = {}
+        if day not in sem_sec_groups[group_key][time]:
+            sem_sec_groups[group_key][time][day] = []
+        sem_sec_groups[group_key][time][day].append(details)
 
     # Get unique time slots and days
     time_slots = sorted(list(set(slot.split(" ", 1)[1] for slot in available_time_slots)))
@@ -1067,7 +1089,7 @@ def display_timetable(optimized_timetable_data, available_time_slots,
     notebook = ttk.Notebook(main_container)
     notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
-    for (semester, section), data in class_sem_groups.items():
+    for (semester, section), data in sem_sec_groups.items():
         tab = tk.Frame(notebook)
         notebook.add(tab, text=f"{section} - {semester}")
 
@@ -1093,7 +1115,6 @@ def display_timetable(optimized_timetable_data, available_time_slots,
                     lecture_details = data[time_slot][day][0]
                     create_cell_content(cell, lecture_details)
                 cell.bind("<Button-1>", lambda e, c=cell: on_cell_click(c))
-                # Also bind click on label inside cell
                 cell.bindtags((str(cell), tab, "all"))
 
         # Make grid expand
@@ -1102,10 +1123,10 @@ def display_timetable(optimized_timetable_data, available_time_slots,
         for j in range(len(days)+1):
             tab.grid_columnconfigure(j, weight=1)
 
-    def build_class_sem_groups_from_current():
+    def build_sem_sec_groups_from_current():
         groups = {}
         for key_tuple, details in current_timetable.items():
-            section, semester, day, time = key_tuple
+            semester, section, day, time = key_tuple
             group_key = (semester, section)
             if group_key not in groups:
                 groups[group_key] = {}
@@ -1120,7 +1141,7 @@ def display_timetable(optimized_timetable_data, available_time_slots,
     btn_frame = tk.Frame(main_container, pady=10)
     btn_frame.pack(fill="x", padx=20)
     tk.Button(btn_frame, text="Export to PDF",
-             command=lambda: export_to_pdf(current_timetable, available_time_slots, build_class_sem_groups_from_current(),
+             command=lambda: export_to_pdf(current_timetable, available_time_slots, build_sem_sec_groups_from_current(),
                                          timetable_metadata, display_title),
              bg="#dc3545", fg="white", padx=15, pady=5, font=('Helvetica', 10)).pack(side="left", padx=10)
     tk.Button(btn_frame, text="Close", command=win.destroy,
