@@ -14,7 +14,8 @@ class TimetableGeneticAlgorithm:
                  course_exceptions=None,
                  population_size=100,
                  max_generations=150,
-                 mutation_rate=0.20):
+                 mutation_rate=0.20,
+                 breaks=None):
 
         if not entries:
             raise ValueError("No timetable entries provided to GA.")
@@ -29,6 +30,7 @@ class TimetableGeneticAlgorithm:
         self.MUTATION_RATE = mutation_rate
         self.LECTURES_PER_COURSE = lectures_per_course
         self.course_exceptions = course_exceptions or {}
+        self.breaks = breaks or []
 
         # Convert room names to string
         for entry in self.entries:

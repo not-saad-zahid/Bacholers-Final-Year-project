@@ -185,7 +185,7 @@ def initialize(master, title_font, header_font, normal_font, button_font, return
     college_name_var = tk.StringVar(value="GOVT. ISLAMIA GRADUATE COLLEGE, CIVIL LINES, LAHORE")
     timetable_title_var = tk.StringVar(value="TIME TABLE FOR BS PROGRAMS")
     effective_date_var = tk.StringVar(value=datetime.now().strftime("%d-%m-%Y"))
-    department_name_var = tk.StringVar(value="DEPARTMENT OF COMPUTER SCIENCE")
+    department_name_var = tk.StringVar(value="COMPUTER SCIENCE")
 
     update_tt_treeview()
 
@@ -921,8 +921,72 @@ def generate_timetable_dialog():
     ttk.Button(entry_frame, text="Add", command=add_exception).grid(row=0, column=2, padx=5)
     ttk.Button(entry_frame, text="Remove", command=remove_exception).grid(row=0, column=3, padx=5)
 
+    # --- Breaks Section ---
+    tk.Label(main_frame, text="Breaks (No lectures during these times)", font=("Helvetica", 12, "bold")).grid(row=18, column=0, columnspan=2, sticky="w", pady=(10,5))
+    breaks_frame = ttk.LabelFrame(main_frame, text="Add Breaks")
+    breaks_frame.grid(row=19, column=0, columnspan=2, sticky="ew", pady=5)
+
+    break_day_var = tk.StringVar()
+    break_start_var = tk.StringVar()
+    break_end_var = tk.StringVar()
+    breaks_list = []
+
+    # Breaks table
+    breaks_columns = ("Day", "Start Time", "End Time")
+    breaks_tree = ttk.Treeview(breaks_frame, columns=breaks_columns, show="headings", height=3)
+    for col in breaks_columns:
+        breaks_tree.heading(col, text=col)
+        breaks_tree.column(col, width=100)
+    breaks_tree.grid(row=0, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+    breaks_scrollbar = ttk.Scrollbar(breaks_frame, orient="vertical", command=breaks_tree.yview)
+    breaks_scrollbar.grid(row=0, column=4, sticky="ns")
+    breaks_tree.configure(yscrollcommand=breaks_scrollbar.set)
+
+    # Breaks entry fields
+    ttk.Combobox(breaks_frame, textvariable=break_day_var, values=days_options, width=12, state="readonly").grid(row=1, column=0, padx=5)
+    ttk.Entry(breaks_frame, textvariable=break_start_var, width=12).grid(row=1, column=1, padx=5)
+    ttk.Entry(breaks_frame, textvariable=break_end_var, width=12).grid(row=1, column=2, padx=5)
+
+    def add_break():
+        day = break_day_var.get()
+        start = break_start_var.get()
+        end = break_end_var.get()
+        if not day or not start or not end:
+            messagebox.showwarning("Missing Break Info", "Please select day and enter both start and end time for the break.")
+            return
+        if not validate_time_format(start) or not validate_time_format(end):
+            messagebox.showwarning("Invalid Time", "Break times must be in HH:MM AM/PM format.")
+            return
+        # Check that start < end
+        try:
+            s = datetime.strptime(start, "%I:%M %p")
+            e = datetime.strptime(end, "%I:%M %p")
+            if s >= e:
+                messagebox.showwarning("Invalid Break", "Break start time must be before end time.")
+                return
+        except Exception:
+            messagebox.showwarning("Invalid Time", "Break times must be in HH:MM AM/PM format.")
+            return
+        # Add to list and tree
+        breaks_list.append({"day": day, "start": start, "end": end})
+        breaks_tree.insert("", "end", values=(day, start, end))
+        break_day_var.set("")
+        break_start_var.set("")
+        break_end_var.set("")
+
+    def remove_break():
+        selected = breaks_tree.selection()
+        if selected:
+            idx = breaks_tree.index(selected[0])
+            breaks_tree.delete(selected[0])
+            if 0 <= idx < len(breaks_list):
+                breaks_list.pop(idx)
+
+    ttk.Button(breaks_frame, text="Add", command=add_break).grid(row=1, column=3, padx=5)
+    ttk.Button(breaks_frame, text="Remove", command=remove_break).grid(row=1, column=4, padx=5)
+
     dialog_btn_frame = tk.Frame(main_frame)
-    dialog_btn_frame.grid(row=17, column=0, columnspan=2, pady=20)
+    dialog_btn_frame.grid(row=20, column=0, columnspan=2, pady=20)
 
     def validate_and_run_generation():
         try:
@@ -954,6 +1018,9 @@ def generate_timetable_dialog():
                 values = exceptions_tree.item(item)["values"]
                 exceptions[values[0]] = int(values[2])  # Map course code to frequency
 
+            # Collect breaks
+            breaks = list(breaks_list)
+
             run_timetable_generation(
                 shift=gen_shift,
                 lectures_per_course=lectures_p_course,
@@ -962,7 +1029,8 @@ def generate_timetable_dialog():
                 end_time=end_t_str,
                 days=selected_days,
                 timetable_metadata=meta,
-                course_exceptions=exceptions
+                course_exceptions=exceptions,
+                breaks=breaks
             )
             # dialog.destroy()  # Close the dialog after successful generation
         except ValueError as e:
@@ -977,7 +1045,7 @@ def generate_timetable_dialog():
 
 
 def run_timetable_generation(shift, lectures_per_course, lecture_duration, start_time, 
-                           end_time, days, timetable_metadata, course_exceptions=None):
+                           end_time, days, timetable_metadata, course_exceptions=None, breaks=None):
     try:
         print(f"Loading GA data for Shift: {shift}")
         db_rows_for_ga = load_timetable_for_ga(shift=shift)
@@ -1003,7 +1071,7 @@ def run_timetable_generation(shift, lectures_per_course, lecture_duration, start
             messagebox.showwarning("Processing Error", "Failed to prepare entries for the Genetic Algorithm.")
             return
 
-        time_slots = generate_time_slots(days, start_time, end_time, lecture_duration, break_duration=10)
+        time_slots = generate_time_slots(days, start_time, end_time, lecture_duration, break_duration=10, breaks=breaks)
         print("Generated UI time slots for GA:", len(time_slots))
 
         if not time_slots:
@@ -1065,6 +1133,32 @@ def display_timetable(optimized_timetable_data, available_time_slots,
     # --- Helper state for selection ---
     selected_cell = {"widget": None}
 
+    # --- Conflict checking helper ---
+    def check_conflict(ld, target_day, target_time, skip_key=None):
+        """Check if assigning lecture details ld to (target_day, target_time) causes a conflict."""
+        if not ld:
+            return False, ""
+        teacher = ld['teacher']
+        room = ld['room']
+        section = ld['class_section']
+        semester = ld.get('semester', 'N/A')
+        # Check for teacher, room, section conflicts at the target slot
+        for key, details in current_timetable.items():
+            if skip_key is not None and key == skip_key:
+                continue
+            k_sem, k_sec, k_day, k_time = key
+            if k_day == target_day and k_time == target_time:
+                # Teacher conflict
+                if details['teacher'] == teacher:
+                    return True, f"Teacher conflict: {teacher} already assigned at {target_day} {target_time}"
+                # Room conflict
+                if details['room'] == room:
+                    return True, f"Room conflict: Room {room} already assigned at {target_day} {target_time}"
+                # Section conflict
+                if details['class_section'] == section and details.get('semester', 'N/A') == semester:
+                    return True, f"Section conflict: {section} ({semester}) already assigned at {target_day} {target_time}"
+        return False, ""
+
     # --- Helper functions ---
     def select_cell(cell):
         if selected_cell["widget"]:
@@ -1093,6 +1187,20 @@ def display_timetable(optimized_timetable_data, available_time_slots,
     def swap_cells(cell1, cell2):
         ld1 = getattr(cell1, "lecture_details", None)
         ld2 = getattr(cell2, "lecture_details", None)
+        # Prepare new keys for conflict checking
+        key1 = (cell1.semester, cell1.section, cell1.day, cell1.time_slot)
+        key2 = (cell2.semester, cell2.section, cell2.day, cell2.time_slot)
+        # Check for conflicts before swapping
+        if ld2:
+            conflict, msg = check_conflict(ld2, cell1.day, cell1.time_slot, skip_key=key2)
+            if conflict:
+                messagebox.showwarning("Conflict Detected", f"Cannot swap:\n{msg}")
+                return
+        if ld1:
+            conflict, msg = check_conflict(ld1, cell2.day, cell2.time_slot, skip_key=key1)
+            if conflict:
+                messagebox.showwarning("Conflict Detected", f"Cannot swap:\n{msg}")
+                return
         # Remove old labels
         for w in cell1.winfo_children():
             w.destroy()
@@ -1118,16 +1226,14 @@ def display_timetable(optimized_timetable_data, available_time_slots,
                 delattr(cell2, "lecture_details")
         # --- Update current_timetable dict ---
         # Remove old entries
-        key1 = (cell1.section, cell1.semester, cell1.day, cell1.time_slot)
-        key2 = (cell2.section, cell2.semester, cell2.day, cell2.time_slot)
         current_timetable.pop(key1, None)
         current_timetable.pop(key2, None)
         # Add new entries
         if ld2:
-            new_key1 = (cell1.section, cell1.semester, cell1.day, cell1.time_slot)
+            new_key1 = (cell1.semester, cell1.section, cell1.day, cell1.time_slot)
             current_timetable[new_key1] = ld2
         if ld1:
-            new_key2 = (cell2.section, cell2.semester, cell2.day, cell2.time_slot)
+            new_key2 = (cell2.semester, cell2.section, cell2.day, cell2.time_slot)
             current_timetable[new_key2] = ld1
 
     def create_cell_content(cell, lecture_details):
