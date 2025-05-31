@@ -5,16 +5,51 @@ import random
 from datetime import datetime, timedelta
 from tkinter import messagebox
 
+def generate_time_slots(days, start_time_str, end_time_str, lecture_duration, break_duration=0, breaks=None):
+    """Generate time slots with consistent handling for all days, skipping user-defined breaks"""
+    start_dt = datetime.strptime(start_time_str, "%I:%M %p")
+    end_dt = datetime.strptime(end_time_str, "%I:%M %p")
+    slots = []
+    breaks = breaks or []
+
+    # Preprocess breaks into a dict: {day: [(start, end), ...]}
+    breaks_by_day = {}
+    for br in breaks:
+        day = br["day"]
+        b_start = datetime.strptime(br["start"], "%I:%M %p")
+        b_end = datetime.strptime(br["end"], "%I:%M %p")
+        breaks_by_day.setdefault(day, []).append((b_start, b_end))
+
+    for day in days:
+        current = start_dt
+        while current + timedelta(minutes=lecture_duration) <= end_dt:
+            end_slot = current + timedelta(minutes=lecture_duration)
+            # Check if this slot overlaps with any break for this day
+            skip = False
+            for b_start, b_end in breaks_by_day.get(day, []):
+                # If slot overlaps with break
+                if not (end_slot <= b_start or current >= b_end):
+                    skip = True
+                    break
+            if not skip:
+                slots.append(
+                    f"{day} {current.strftime('%I:%M %p')}-{end_slot.strftime('%I:%M %p')}"
+                )
+            current = end_slot  # Remove break by directly using end time as next start
+
+    return slots
+
 class TimetableGeneticAlgorithm:
     def __init__(self,
                  *,
-                 entries,                # List of dictionaries with course details
-                 time_slots_input,       # List of pre-generated time slot strings from UI
+                 entries,
+                 time_slots_input,
                  lectures_per_course,
-                 course_exceptions=None, # Dictionary for exceptions in required lectures per course
+                 course_exceptions=None,
                  population_size=100,
-                 max_generations=150,    # Increased max generations
-                 mutation_rate=0.20):    # Slightly increased mutation rate
+                 max_generations=150,
+                 mutation_rate=0.20,
+                 breaks=None):
 
         if not entries:
             raise ValueError("No timetable entries provided to GA.")
@@ -29,6 +64,7 @@ class TimetableGeneticAlgorithm:
         self.MUTATION_RATE = mutation_rate
         self.LECTURES_PER_COURSE = lectures_per_course
         self.course_exceptions = course_exceptions or {}
+        self.breaks = breaks or []
 
         # Convert room names to string
         for entry in self.entries:
@@ -37,7 +73,8 @@ class TimetableGeneticAlgorithm:
         # Extract unique sets
         self.unique_rooms = list(set(e['room'] for e in self.entries))
         self.unique_teachers = list(set(e['teacher'] for e in self.entries))
-        self.unique_sections = list(set(e['class_section'] for e in self.entries))
+        # Use (semester, class_section) as unique identifier
+        self.unique_semester_sections = list(set((e['semester'], e['class_section']) for e in self.entries))
 
         # Group time slots by day
         self.time_slots_by_day = {}
@@ -56,11 +93,13 @@ class TimetableGeneticAlgorithm:
         print(f"GA initialized with {len(self.entries)} entries, {len(self.unique_time_slots)} time slots.")
         print(f"Lectures per course: {self.LECTURES_PER_COURSE}")
 
-        # Store required lectures for each course
+        # Store required lectures for each course (now keyed by (semester, section, code))
         self.required_lectures = {}
         for entry in self.entries:
             code = entry['course_code']
-            self.required_lectures[code] = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
+            semester = entry['semester']
+            section = entry['class_section']
+            self.required_lectures[(semester, section, code)] = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
         
         # Create a mapping of teachers to courses they teach
         self.teacher_courses = {}
@@ -79,24 +118,27 @@ class TimetableGeneticAlgorithm:
         """Debug function to check lecture requirements vs available slots"""
         total_lectures = 0
         lectures_by_section = {}
-        lectures_by_section_course = {}
+        lectures_by_semester_section = {}
+        lectures_by_semester_section_course = {}
         
         # Count required lectures by section and section-course
         for entry in self.entries:
+            semester = entry['semester']
             section = entry['class_section']
             code = entry['course_code']
             course = entry['course_name']
             required = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
             
-            if section not in lectures_by_section:
-                lectures_by_section[section] = 0
-                lectures_by_section_course[section] = {}
+            key = (semester, section)
+            if key not in lectures_by_semester_section:
+                lectures_by_semester_section[key] = 0
+                lectures_by_semester_section_course[key] = {}
             
-            key = (course, code)
-            if key not in lectures_by_section_course[section]:
-                lectures_by_section[section] += required
+            course_key = (course, code)
+            if course_key not in lectures_by_semester_section_course[key]:
+                lectures_by_semester_section[key] += required
                 total_lectures += required
-                lectures_by_section_course[section][key] = required
+                lectures_by_semester_section_course[key][course_key] = required
         
         # Count available slots
         total_slots = len(self.unique_time_slots)
@@ -104,18 +146,21 @@ class TimetableGeneticAlgorithm:
         print(f"Total required lectures across all sections: {total_lectures}")
         print(f"Available unique time slots: {total_slots}")
         print("Lectures required by section:")
-        for section, count in lectures_by_section.items():
-            print(f"  Section {section}: {count} lectures")
+        overbooked_sections = []
+        for (semester, section), count in lectures_by_semester_section.items():
+            print(f"  Semester '{semester}' Section '{section}': {count} lectures")
             if count > total_slots:
-                print(f"  WARNING: Section {section} requires {count} lectures but only {total_slots} slots available")
+                print(f"  WARNING: Semester '{semester}' Section '{section}' requires {count} lectures but only {total_slots} slots available")
+                overbooked_sections.append(((semester, section), count))
         
-        # Check individual course requirements
-        print("Detailed course requirements by section:")
-        for section, courses in lectures_by_section_course.items():
-            print(f"  Section {section}:")
-            for (course, code), required in courses.items():
-                print(f"    {course} ({code}): {required} lectures")
-        
+        # Show message box and raise exception if any section is overbooked
+        if overbooked_sections:
+            msg = "Cannot generate timetable:\n"
+            for (semester, section), count in overbooked_sections:
+                msg += f"'{semester}' '{section}' requires {count} lectures but only {total_slots} time slots are available.\n"
+            messagebox.showerror("Timetable Generation Error", msg)
+            raise ValueError(msg)
+
         # Print teacher workload
         print("\nTeacher assignments:")
         for teacher, courses in self.teacher_courses.items():
@@ -128,20 +173,22 @@ class TimetableGeneticAlgorithm:
     def _create_random_timetable(self):
         """Create a random timetable with improved teacher conflict handling"""
         timetable = {}
-        section_time_slot_usage = {section: set() for section in self.unique_sections}
+        # Use (semester, section) as key
+        section_time_slot_usage = {sem_sec: set() for sem_sec in self.unique_semester_sections}
         teacher_time_slot_usage = {teacher: set() for teacher in self.unique_teachers}
         course_assignments = {}
 
-        # Group entries by section for separate processing
-        entries_by_section = {}
+        # Group entries by (semester, section)
+        entries_by_semester_section = {}
         for entry in self.entries:
-            section = entry['class_section']
-            if section not in entries_by_section:
-                entries_by_section[section] = []
-            entries_by_section[section].append(entry)
+            sem_sec = (entry['semester'], entry['class_section'])
+            if sem_sec not in entries_by_semester_section:
+                entries_by_semester_section[sem_sec] = []
+            entries_by_semester_section[sem_sec].append(entry)
 
-        # For each section, do course assignment separately
-        for section, section_entries in entries_by_section.items():
+        # For each (semester, section), do course assignment separately
+        for sem_sec, section_entries in entries_by_semester_section.items():
+            semester, section = sem_sec
             # Prepare a list of (course, section, code, required_lectures) and sort descending by required lectures
             course_info = []
             for entry in section_entries:
@@ -149,7 +196,7 @@ class TimetableGeneticAlgorithm:
                 code = entry['course_code']
                 teacher = entry['teacher']
                 required_lectures = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
-                course_info.append((course, section, code, required_lectures, teacher, entry))
+                course_info.append((course, section, code, required_lectures, teacher, entry, semester))
             
             # Sort by required_lectures descending (prioritize courses with more lectures)
             course_info.sort(key=lambda x: -x[3])
@@ -194,9 +241,9 @@ class TimetableGeneticAlgorithm:
                         preferred_slots.append((day, time))
 
             # For each course in this section, assign time slots
-            for course, section, code, required_lectures, teacher, entry in course_info:
+            for course, section, code, required_lectures, teacher, entry, semester in course_info:
                 assigned_slots = []
-                key_prefix = (course, section, code)
+                key_prefix = (semester, course, section, code)
                 
                 # First attempt: try to use consecutive days at the same time if possible
                 if required_lectures <= len(self.ordered_days):  # Only try this for courses that could fit consecutive days
@@ -205,8 +252,8 @@ class TimetableGeneticAlgorithm:
                         consecutive_days = []
                         for day in self.ordered_days:
                             slot_key = f"{day} {time}"
-                            if (slot_key in self.unique_time_slots 
-                                and slot_key not in section_time_slot_usage[section]
+                            if (slot_key in self.unique_time_slots
+                                and slot_key not in section_time_slot_usage[sem_sec]
                                 and slot_key not in teacher_time_slot_usage[teacher]):  # Check teacher availability
                                 consecutive_days.append(day)
                             else:
@@ -221,7 +268,7 @@ class TimetableGeneticAlgorithm:
                                 day = consecutive_days[i]
                                 slot_key = f"{day} {time}"
                                 assigned_slots.append((day, time))
-                                section_time_slot_usage[section].add(slot_key)
+                                section_time_slot_usage[sem_sec].add(slot_key)
                                 teacher_time_slot_usage[teacher].add(slot_key)  # Mark teacher as busy
                             break  # We've assigned all needed slots for this course
                 
@@ -231,8 +278,8 @@ class TimetableGeneticAlgorithm:
                         available_days = []
                         for day in self.ordered_days:
                             slot_key = f"{day} {time}"
-                            if (slot_key in self.unique_time_slots 
-                                and slot_key not in section_time_slot_usage[section]
+                            if (slot_key in self.unique_time_slots
+                                and slot_key not in section_time_slot_usage[sem_sec]
                                 and slot_key not in teacher_time_slot_usage[teacher]):  # Check teacher availability
                                 available_days.append(day)
                         
@@ -242,19 +289,18 @@ class TimetableGeneticAlgorithm:
                                 day = available_days[i]
                                 slot_key = f"{day} {time}"
                                 assigned_slots.append((day, time))
-                                section_time_slot_usage[section].add(slot_key)
+                                section_time_slot_usage[sem_sec].add(slot_key)
                                 teacher_time_slot_usage[teacher].add(slot_key)  # Mark teacher as busy
                             break  # We've assigned all needed slots for this course
                 
                 # Final attempt: use any available slots (fallback method)
                 if len(assigned_slots) < required_lectures:
-                    # Prioritize slots where teacher is not already scheduled
                     for day, time in all_slots_shuffled:
                         slot_key = f"{day} {time}"
-                        if (slot_key not in section_time_slot_usage[section] 
+                        if (slot_key not in section_time_slot_usage[sem_sec]
                             and slot_key not in teacher_time_slot_usage[teacher]):  # Check teacher availability
                             assigned_slots.append((day, time))
-                            section_time_slot_usage[section].add(slot_key)
+                            section_time_slot_usage[sem_sec].add(slot_key)
                             teacher_time_slot_usage[teacher].add(slot_key)  # Mark teacher as busy
                             if len(assigned_slots) == required_lectures:
                                 break
@@ -264,9 +310,9 @@ class TimetableGeneticAlgorithm:
                         print(f"WARNING: Teacher conflict may be unavoidable for {teacher} - {course} ({code})")
                         for day, time in all_slots_shuffled:
                             slot_key = f"{day} {time}"
-                            if slot_key not in section_time_slot_usage[section]:
+                            if slot_key not in section_time_slot_usage[sem_sec]:
                                 assigned_slots.append((day, time))
-                                section_time_slot_usage[section].add(slot_key)
+                                section_time_slot_usage[sem_sec].add(slot_key)
                                 # Make note of potential teacher conflict but still add it
                                 if slot_key in teacher_time_slot_usage[teacher]:
                                     print(f"CONFLICT: Teacher {teacher} double-booked at {slot_key}")
@@ -276,7 +322,7 @@ class TimetableGeneticAlgorithm:
                 
                 # Create timetable entries for this course
                 for idx, (day, time) in enumerate(assigned_slots):
-                    key = (course, section, idx, code)
+                    key = (semester, course, section, idx, code)
                     timetable[key] = {
                         'course_name': course,
                         'course_code': code,
@@ -284,7 +330,7 @@ class TimetableGeneticAlgorithm:
                         'time_slot': f"{day} {time}",
                         'room': entry['room'],
                         'teacher': teacher,
-                        'semester': entry['semester'],
+                        'semester': semester,
                         'class_section': section
                     }
 
@@ -297,48 +343,65 @@ class TimetableGeneticAlgorithm:
         section_timeslots = {}
         teacher_timeslots = {}
         room_timeslots = {}
-        
+
         # Track all types of conflicts
         teacher_conflicts = 0
         section_conflicts = 0
         room_conflicts = 0
-        
+        teacher_conflict_details = []
+
         for key, details in timetable.items():
+            semester = details['semester']
             section = details['class_section']
             time_slot = details['time_slot']
             teacher = details['teacher']
             room = details['room']
-            
-            # Check section-timeslot conflicts
-            if section not in section_timeslots:
-                section_timeslots[section] = {}
-            if time_slot in section_timeslots[section]:
+            sem_sec = (semester, section)
+
+            # Section-timeslot conflicts
+            if sem_sec not in section_timeslots:
+                section_timeslots[sem_sec] = {}
+            if time_slot in section_timeslots[sem_sec]:
                 section_conflicts += 1
-                print(f"WARNING: Conflicting timeslot {time_slot} for section {section}")
-                print(f"  - {section_timeslots[section][time_slot]['course_name']} vs {details['course_name']}")
-            section_timeslots[section][time_slot] = details
-            
+                print(f"WARNING: Conflicting timeslot {time_slot} for semester {semester} section {section}")
+                print(f"  - {section_timeslots[sem_sec][time_slot]['course_name']} vs {details['course_name']}")
+            section_timeslots[sem_sec][time_slot] = details
+
             # Check teacher-timeslot conflicts
             if teacher not in teacher_timeslots:
                 teacher_timeslots[teacher] = {}
             if time_slot in teacher_timeslots[teacher]:
                 teacher_conflicts += 1
+                teacher_conflict_details.append(
+                    (teacher, time_slot, teacher_timeslots[teacher][time_slot], details)
+                )
                 print(f"WARNING: Conflicting timeslot {time_slot} for teacher {teacher}")
                 print(f"  - {teacher_timeslots[teacher][time_slot]['course_name']} ({teacher_timeslots[teacher][time_slot]['class_section']}) vs {details['course_name']} ({details['class_section']})")
             teacher_timeslots[teacher][time_slot] = details
-            
+
             # Check room-timeslot conflicts
             room_key = f"{room}_{time_slot}"
             if room_key in room_timeslots:
                 room_conflicts += 1
                 print(f"WARNING: Room conflict at {time_slot} in room {room}")
             room_timeslots[room_key] = details
-        
-        # Report total conflicts
-        if teacher_conflicts > 0 or section_conflicts > 0 or room_conflicts > 0:
-            print(f"CONFLICT SUMMARY: {teacher_conflicts} teacher conflicts, {section_conflicts} section conflicts, {room_conflicts} room conflicts")
-        else:
-            print("No conflicts found in timetable.")
+
+        # If any teacher is double-booked, show error and stop
+        if teacher_conflicts > 0:
+            msg = "Cannot generate timetable:\n"
+            msg += "The following teacher(s) are assigned to more than one class at the same time:\n"
+            for teacher, time_slot, d1, d2 in teacher_conflict_details:
+                msg += (
+                    f"\nTeacher '{teacher}' has a conflict at '{time_slot}':\n"
+                    f"  - {d1['course_name']} (Section {d1['class_section']})\n"
+                    f"  - {d2['course_name']} (Section {d2['class_section']})\n"
+                )
+            # Add teacher workload info
+            msg += "\nTeacher workload summary:\n"
+            for teacher, slots in teacher_timeslots.items():
+                msg += f"  {teacher}: {len(slots)} lectures assigned\n"
+            messagebox.showerror("Timetable Generation Error", msg)
+            raise ValueError(msg)
         
         # Print teacher daily workload
         teacher_daily_load = {}
@@ -376,6 +439,7 @@ class TimetableGeneticAlgorithm:
             time_slot = details['time_slot']
             room = details['room']
             teacher = details['teacher']
+            semester = details['semester']
             
             day, time = time_slot.split(' ', 1)
             course_key = (course, section, code)
@@ -411,7 +475,7 @@ class TimetableGeneticAlgorithm:
             teacher_usage[teacher_key] = course_key
 
             # Class conflicts
-            class_key = f"{time_slot}_{section}"
+            class_key = f"{time_slot}_{semester}_{section}"
             if class_key in class_usage:
                 score += 5000
             class_usage[class_key] = course_key
@@ -422,24 +486,22 @@ class TimetableGeneticAlgorithm:
             if teacher_daily_load[teacher_day_key] > 3:  # Reduced from 4 to 3
                 score += 100 * (teacher_daily_load[teacher_day_key] - 3)  # Increased penalty
 
-            section_day_key = f"{section}_{day}"
+            section_day_key = f"{semester}_{section}_{day}"
             section_daily_load[section_day_key] = section_daily_load.get(section_day_key, 0) + 1
             if section_daily_load[section_day_key] > 5:
                 score += 50 * (section_daily_load[section_day_key] - 5)
 
-        # Create a mapping of required lectures that accounts for section-specific courses
+        # Create a mapping of required lectures that accounts for semester-section-specific courses
         required_lectures = {}
         for entry in self.entries:
-            course_key = (entry['course_name'], entry['class_section'], entry['course_code'])
+            course_key = (entry['semester'], entry['course_name'], entry['class_section'], entry['course_code'])
             required = self.course_exceptions.get(entry['course_code'], self.LECTURES_PER_COURSE)
             required_lectures[course_key] = required
 
         # Check lecture count requirements
         for course_key, required in required_lectures.items():
-            actual = course_lecture_counts.get(course_key, 0)
-            
+            actual = course_lecture_counts.get((course_key[1], course_key[2], course_key[3]), 0)
             if actual != required:
-                # Heavy penalty for wrong lecture count - but make it proportional to the difference
                 score += 5000 * abs(actual - required)
 
         # Check same time slot requirement
@@ -455,7 +517,7 @@ class TimetableGeneticAlgorithm:
             if required > 1:
                 # Get all time slots for this course
                 course_slots = [details['time_slot'] for key, details in timetable.items() 
-                               if (details['course_name'], details['class_section'], details['course_code']) == course_key]
+                               if (details['semester'], details['course_name'], details['class_section'], details['course_code']) == course_key]
                 
                 if not course_slots:
                     continue
@@ -504,35 +566,36 @@ class TimetableGeneticAlgorithm:
         child = {}
         teacher_time_slot_usage = {teacher: set() for teacher in self.unique_teachers}
         
-        # Group courses by section for each parent
-        p1_by_section = {}
-        p2_by_section = {}
-        
+        # Group courses by (semester, section) for each parent
+        p1_by_semester_section = {}
+        p2_by_semester_section = {}
         for key, details in p1.items():
+            semester = details['semester']
             section = details['class_section']
-            if section not in p1_by_section:
-                p1_by_section[section] = {}
-            p1_by_section[section][key] = details
-            
+            sem_sec = (semester, section)
+            if sem_sec not in p1_by_semester_section:
+                p1_by_semester_section[sem_sec] = {}
+            p1_by_semester_section[sem_sec][key] = details
         for key, details in p2.items():
+            semester = details['semester']
             section = details['class_section']
-            if section not in p2_by_section:
-                p2_by_section[section] = {}
-            p2_by_section[section][key] = details
-        
-        # For each section, perform crossover between parent sections
-        for section in set(list(p1_by_section.keys()) + list(p2_by_section.keys())):
+            sem_sec = (semester, section)
+            if sem_sec not in p2_by_semester_section:
+                p2_by_semester_section[sem_sec] = {}
+            p2_by_semester_section[sem_sec][key] = details
+
+        for sem_sec in set(list(p1_by_semester_section.keys()) + list(p2_by_semester_section.keys())):
             # If section exists in only one parent, just copy it
-            if section not in p1_by_section:
-                child.update(p2_by_section[section])
+            if sem_sec not in p1_by_semester_section:
+                child.update(p2_by_semester_section[sem_sec])
                 # Update teacher usage
-                for key, details in p2_by_section[section].items():
+                for key, details in p2_by_semester_section[sem_sec].items():
                     teacher_time_slot_usage[details['teacher']].add(details['time_slot'])
                 continue
-            if section not in p2_by_section:
-                child.update(p1_by_section[section])
+            if sem_sec not in p2_by_semester_section:
+                child.update(p1_by_semester_section[sem_sec])
                 # Update teacher usage
-                for key, details in p1_by_section[section].items():
+                for key, details in p1_by_semester_section[sem_sec].items():
                     teacher_time_slot_usage[details['teacher']].add(details['time_slot'])
                 continue
                 
@@ -540,13 +603,13 @@ class TimetableGeneticAlgorithm:
             p1_courses = {}
             p2_courses = {}
             
-            for key, details in p1_by_section[section].items():
+            for key, details in p1_by_semester_section[sem_sec].items():
                 course = (details['course_name'], details['course_code'])
                 if course not in p1_courses:
                     p1_courses[course] = []
                 p1_courses[course].append((key, details))
                 
-            for key, details in p2_by_section[section].items():
+            for key, details in p2_by_semester_section[sem_sec].items():
                 course = (details['course_name'], details['course_code'])
                 if course not in p2_courses:
                     p2_courses[course] = []
@@ -653,17 +716,20 @@ class TimetableGeneticAlgorithm:
                     mutated_timetable[key_to_mutate]['time_slot'] = new_time_slot
                     conflict_mutations += 1
         
-        # Group by course-section for regular mutations
+        # Group by (semester, course-section) for regular mutations
         blocks = {}
         for key in mutated_timetable:
-            # key can be (course, section, idx, code)
-            course, section, idx = key[0], key[1], key[2]
-            code = key[3] if len(key) > 3 else None
-            blocks.setdefault((course, section, code), []).append(key)
+            # key can be (semester, course, section, idx, code)
+            if len(key) == 5:
+                semester, course, section, idx, code = key
+            else:
+                # fallback for legacy keys
+                semester, course, section, idx, code = None, key[0], key[1], key[2], key[3] if len(key) > 3 else None
+            blocks.setdefault((semester, course, section, code), []).append(key)
         
         # Mutate whole blocks (courses) with standard probability
         for cs, keys in blocks.items():
-            course, section, code = cs
+            semester, course, section, code = cs
             required = self.course_exceptions.get(code, self.LECTURES_PER_COURSE)
             if random.random() < self.MUTATION_RATE:
                 # For this course-section, we'll try new time slots
@@ -896,39 +962,5 @@ def run_genetic_algorithm(entries, time_slots, lectures_per_course, course_excep
         messagebox.showerror("Genetic Algorithm Error", f"An error occurred while generating the timetable: {str(e)}")
         print(f"Error in genetic algorithm: {str(e)}")
         return [], float('inf')
-
-# Example usage (not executed directly):
-"""
-if __name__ == "__main__":
-    # Example data
-    entries = [
-        {
-            'course_name': 'Mathematics',
-            'course_code': 'MATH101',
-            'teacher': 'Dr. Smith',
-            'room': 'Room 101',
-            'semester': '1',
-            'class_section': 'Section A'
-        },
-        # Add more sample entries
-    ]
     
-    time_slots = [
-        'Monday 9:00-10:00',
-        'Monday 10:00-11:00',
-        'Tuesday 9:00-10:00',
-        # Add more time slots
-    ]
     
-    # Run the genetic algorithm
-    schedule, fitness = run_genetic_algorithm(
-        entries=entries,
-        time_slots=time_slots,
-        lectures_per_course=3,
-        course_exceptions={'MATH101': 2}  # Example: MATH101 needs only 2 lectures
-    )
-    
-    # Print the resulting schedule
-    for entry in schedule:
-        print(f"{entry['course_name']} - {entry['time_slot']} - {entry['teacher']} - {entry['room']}")
-"""

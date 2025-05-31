@@ -236,3 +236,5 @@ def delete_timetable_entry_from_db(entry_id):
 
 def close_db():
     conn.close()
+    
+    
