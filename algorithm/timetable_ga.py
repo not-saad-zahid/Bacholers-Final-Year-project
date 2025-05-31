@@ -5,6 +5,40 @@ import random
 from datetime import datetime, timedelta
 from tkinter import messagebox
 
+def generate_time_slots(days, start_time_str, end_time_str, lecture_duration, break_duration=0, breaks=None):
+    """Generate time slots with consistent handling for all days, skipping user-defined breaks"""
+    start_dt = datetime.strptime(start_time_str, "%I:%M %p")
+    end_dt = datetime.strptime(end_time_str, "%I:%M %p")
+    slots = []
+    breaks = breaks or []
+
+    # Preprocess breaks into a dict: {day: [(start, end), ...]}
+    breaks_by_day = {}
+    for br in breaks:
+        day = br["day"]
+        b_start = datetime.strptime(br["start"], "%I:%M %p")
+        b_end = datetime.strptime(br["end"], "%I:%M %p")
+        breaks_by_day.setdefault(day, []).append((b_start, b_end))
+
+    for day in days:
+        current = start_dt
+        while current + timedelta(minutes=lecture_duration) <= end_dt:
+            end_slot = current + timedelta(minutes=lecture_duration)
+            # Check if this slot overlaps with any break for this day
+            skip = False
+            for b_start, b_end in breaks_by_day.get(day, []):
+                # If slot overlaps with break
+                if not (end_slot <= b_start or current >= b_end):
+                    skip = True
+                    break
+            if not skip:
+                slots.append(
+                    f"{day} {current.strftime('%I:%M %p')}-{end_slot.strftime('%I:%M %p')}"
+                )
+            current = end_slot  # Remove break by directly using end time as next start
+
+    return slots
+
 class TimetableGeneticAlgorithm:
     def __init__(self,
                  *,
@@ -928,39 +962,3 @@ def run_genetic_algorithm(entries, time_slots, lectures_per_course, course_excep
         messagebox.showerror("Genetic Algorithm Error", f"An error occurred while generating the timetable: {str(e)}")
         print(f"Error in genetic algorithm: {str(e)}")
         return [], float('inf')
-
-# Example usage (not executed directly):
-"""
-if __name__ == "__main__":
-    # Example data
-    entries = [
-        {
-            'course_name': 'Mathematics',
-            'course_code': 'MATH101',
-            'teacher': 'Dr. Smith',
-            'room': 'Room 101',
-            'semester': '1',
-            'class_section': 'Section A'
-        },
-        # Add more sample entries
-    ]
-    
-    time_slots = [
-        'Monday 9:00-10:00',
-        'Monday 10:00-11:00',
-        'Tuesday 9:00-10:00',
-        # Add more time slots
-    ]
-    
-    # Run the genetic algorithm
-    schedule, fitness = run_genetic_algorithm(
-        entries=entries,
-        time_slots=time_slots,
-        lectures_per_course=3,
-        course_exceptions={'MATH101': 2}  # Example: MATH101 needs only 2 lectures
-    )
-    
-    # Print the resulting schedule
-    for entry in schedule:
-        print(f"{entry['course_name']} - {entry['time_slot']} - {entry['teacher']} - {entry['room']}")
-"""

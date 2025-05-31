@@ -1,241 +1,145 @@
-import tkinter as tk
-from tkinter import font as tkfont
+import sys
+import os
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QPushButton, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QFrame, QStackedWidget
+)
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QPixmap
 
-from ui.timetable_ui import initialize as init_tt, show as show_tt, hide as hide_tt
-from ui.datesheet_ui import initialize as init_dt, show as show_dt, hide as hide_dt
+from ui.timetable_ui import TimetableWindow
+from ui.datesheet_ui import DatesheetWindow
 
-# Global frames for navigation
-header_frame = None
-main_frame = None
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Automatic Scheduler for GIGCCL")
+        self.setGeometry(100, 100, 1200, 700)
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+            }
+        """)
 
+        self.stacked = QStackedWidget()
+        self.setCentralWidget(self.stacked)
 
+        # Main menu page
+        self.menu_page = QWidget()
+        menu_layout = QVBoxLayout(self.menu_page)
+        menu_layout.setContentsMargins(0, 0, 0, 0)
+        menu_layout.setSpacing(0)
 
-def return_home():
-    """Hide module UIs and show home page"""
-    hide_tt()
-    hide_dt()
-    header_frame.pack(side="top", fill="x")
-    main_frame.pack(expand=True, fill="both", padx=0, pady=0)
+        # Header
+        header = QWidget()
+        header.setFixedHeight(60)
+        header.setStyleSheet("background-color: #2196F3; color: white;")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(20, 0, 20, 0)
+        title = QLabel("Automatic Scheduler for GIGCCL")
+        title.setFont(QFont("Arial", 20, QFont.Weight.Bold))
+        title.setStyleSheet("color: white;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        menu_layout.addWidget(header)
 
+        # Central content
+        central_widget = QWidget()
+        central_layout = QVBoxLayout(central_widget)
+        central_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-def open_timetable():
-    """Show timetable UI"""
-    header_frame.pack_forget()
-    main_frame.pack_forget()
-    show_tt()
+        # Add a logo or illustration (optional)
+        logo_label = QLabel()
+        logo_path = os.path.join(os.path.dirname(__file__), "icons", "gigccl_logo.png")
+        logo_label.setPixmap(QPixmap(logo_path).scaled(120, 120, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        central_layout.addWidget(logo_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        # Subtitle or welcome message
+        subtitle = QLabel("Welcome to the Automatic Scheduler for GIGCCL!")
+        subtitle.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        subtitle.setStyleSheet("color: #333; margin-bottom: 18px;")
+        central_layout.addWidget(subtitle, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-def open_datesheet():
-    """Show datesheet UI"""
-    header_frame.pack_forget()
-    main_frame.pack_forget()
-    show_dt()
+        # Description
+        desc = QLabel(
+            "This application helps you manage and generate timetables and datesheets for your institution.\n"
+            "You can add, edit, and organize class schedules, and export them as PDF or Excel.\n"
+            "Get started by choosing an option below."
+        )
+        desc.setFont(QFont("Arial", 12))
+        desc.setStyleSheet("color: #444; margin-bottom: 30px;")
+        desc.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        central_layout.addWidget(desc, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        # Buttons
+        timetable_btn = QPushButton("Open Timetable")
+        datesheet_btn = QPushButton("Open Datesheet")
+        timetable_btn.setFixedSize(220, 60)
+        datesheet_btn.setFixedSize(220, 60)
+        timetable_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 16px;
+                background-color: #2196F3;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        datesheet_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 16px;
+                background-color: #17a2b8;
+                color: white;
+                border-radius: 8px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #138496;
+            }
+        """)
+        timetable_btn.clicked.connect(self.open_timetable)
+        datesheet_btn.clicked.connect(self.open_datesheet)
 
-def main():
-    global header_frame, main_frame
+        btns_layout = QHBoxLayout()
+        btns_layout.setSpacing(30)
+        btns_layout.addWidget(timetable_btn)
+        btns_layout.addWidget(datesheet_btn)
+        central_layout.addLayout(btns_layout)
 
-    root = tk.Tk()
-    root.title("Automatic Scheduler for GIGCCL")
-    root.geometry("1280x720")
-    root.state('zoomed')
-    root.resizable(True, True)
+        # Footer
+        footer = QLabel("Developed by the Computer Science Department, GIGCCL")
+        footer.setFont(QFont("Arial", 10, QFont.Weight.Normal))
+        footer.setStyleSheet("color: #888; margin-top: 40px;")
+        footer.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        central_layout.addWidget(footer, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
 
-    # Define fonts
-    title_font = tkfont.Font(family="Helvetica", size=18, weight="bold")
-    header_font = tkfont.Font(family="Helvetica", size=14, weight="bold")
-    normal_font = tkfont.Font(family="Helvetica", size=10, weight="bold")
-    button_font = tkfont.Font(family="Helvetica", size=11, weight="bold")
-    subtitle_font = tkfont.Font(family="Helvetica", size=12, slant="italic")
+        menu_layout.addWidget(central_widget, stretch=1)
 
-    # Initialize modules and hide them initially
-    init_tt(root, title_font, header_font, normal_font, button_font, return_home)
-    hide_tt()
-    init_dt(root, title_font, header_font, normal_font, button_font, return_home)
-    hide_dt()
+        # Timetable and Datesheet pages
+        self.timetable_page = TimetableWindow(back_callback=self.show_menu)
+        self.datesheet_page = DatesheetWindow(back_callback=self.show_menu)
 
-    # ---------------------- Home Page ----------------------
-    # Header
-    header_frame = tk.Frame(root, bg="#0d6efd", height=70)
-    header_frame.pack(side="top", fill="x")
-    # Gradient effect using nested frames
-    header_gradient = tk.Frame(header_frame, height=70)
-    header_gradient.pack(fill="x")
-    strip = tk.Frame(header_gradient, bg="#0d6efd", height=60)
-    strip.pack(fill="x", expand=True)
+        self.stacked.addWidget(self.menu_page)         # index 0
+        self.stacked.addWidget(self.timetable_page)    # index 1
+        self.stacked.addWidget(self.datesheet_page)    # index 2
 
-    title_label = tk.Label(
-        header_frame,
-        text="Automatic Scheduler",
-        bg="#0d6efd",
-        fg="white",
-        font=title_font
-    )
-    title_label.place(relx=0.02, rely=0.5, anchor="w")
+        self.show_menu()
 
-    logo_label = tk.Label(
-        header_frame,
-        text="GIGCCL",
-        bg="#0d6efd",
-        fg="white",
-        font=title_font
-    )
-    logo_label.place(relx=0.98, rely=0.5, anchor="e")
+    def show_menu(self):
+        self.stacked.setCurrentIndex(0)
 
-    # Main content frame
-    main_frame = tk.Frame(root, bg="#f8f9fa")
-    main_frame.pack(expand=True, fill="both", padx=0, pady=0)
+    def open_timetable(self):
+        self.stacked.setCurrentIndex(1)
 
-    # Banner
-    banner_frame = tk.Frame(main_frame, bg="#f8f9fa", height=180)
-    banner_frame.pack(fill="x")
-    main_heading = tk.Label(
-        banner_frame,
-        text="Academic Scheduling System",
-        font=title_font,
-        bg="#f8f9fa",
-        fg="#212529"
-    )
-    main_heading.pack(pady=(25, 5))
-    subtitle = tk.Label(
-        banner_frame,
-        text="Streamline your academic scheduling process with our automated tools",
-        font=subtitle_font,
-        bg="#f8f9fa",
-        fg="#495057"
-    )
-    subtitle.pack(pady=5)
-    description = tk.Label(
-        banner_frame,
-        text=(
-            "Create conflict-free timetables and examination schedules\n"
-            "with just a few clicks. Perfect for academic institutions of all sizes."
-        ),
-        font=normal_font,
-        bg="#f8f9fa",
-        fg="#6c757d"
-    )
-    description.pack(pady=10)
-
-    # Cards container
-    content_frame = tk.Frame(main_frame, bg="#f8f9fa")
-    content_frame.pack(expand=True, fill="both")
-    card_frame = tk.Frame(content_frame, bg="#f8f9fa")
-    card_frame.pack(expand=True, fill="both")
-
-    # Timetable Card
-    tt_card = tk.Frame(card_frame, bg="white", relief="solid", borderwidth=1)
-    tt_card.pack(side="left", expand=True, fill="both", padx=15, pady=10)
-    tt_title = tk.Label(tt_card, text="Class Timetable Generator", font=header_font, bg="white")
-    tt_title.pack(pady=5)
-    tt_desc = tk.Label(
-        tt_card,
-        text=(
-            "Create optimal class schedules\n"
-            "with automatic conflict resolution.\n"
-            "Ideal for schools and colleges."
-        ),
-        font=normal_font,
-        bg="white",
-        fg="#6c757d",
-        justify="center"
-    )
-    tt_desc.pack(pady=10)
-    tt_features = [
-        "Conflict-free scheduling",
-        "Teacher workload optimization",
-        "Automatic time schedule generation",
-    ]
-    tt_features_frame = tk.Frame(tt_card, bg="white")
-    tt_features_frame.pack(pady=5)
-    for feature in tt_features:
-        f_frame = tk.Frame(tt_features_frame, bg="white")
-        f_frame.pack(anchor="w", padx=30, pady=2)
-        bullet = tk.Label(f_frame, text="•", fg="#0d6efd", bg="white", font=normal_font)
-        bullet.pack(side="left", padx=(0,5))
-        lbl = tk.Label(f_frame, text=feature, fg="#495057", bg="white", font=normal_font)
-        lbl.pack(side="left")
-    btn_timetable = tk.Button(
-        tt_card,
-        text="Generate Timetable",
-        font=button_font,
-        bg="#0d6efd",
-        fg="white",
-        command=open_timetable,
-        padx=15,
-        pady=8,
-        borderwidth=0
-    )
-    btn_timetable.pack(pady=15)
-
-    # Datesheet Card
-    dt_card = tk.Frame(card_frame, bg="white", relief="solid", borderwidth=1)
-    dt_card.pack(side="right", expand=True, fill="both", padx=15, pady=10)
-    dt_title = tk.Label(dt_card, text="Examination DateSheet", font=header_font, bg="white")
-    dt_title.pack(pady=5)
-    dt_desc = tk.Label(
-        dt_card,
-        text=(
-            "Plan examination schedules\n"
-            "without subject conflicts.\n"
-            "Simplify your exam planning process."
-        ),
-        font=normal_font,
-        bg="white",
-        fg="#6c757d",
-        justify="center"
-    )
-    dt_desc.pack(pady=10)
-    dt_features = [
-        "Minimize student exam stress",
-        "Spread exams appropriately",
-        "Automatic conflict resolution"
-    ]
-    dt_features_frame = tk.Frame(dt_card, bg="white")
-    dt_features_frame.pack(pady=5)
-    for feature in dt_features:
-        f_frame = tk.Frame(dt_features_frame, bg="white")
-        f_frame.pack(anchor="w", padx=30, pady=2)
-        bullet = tk.Label(f_frame, text="•", fg="#0d6efd", bg="white", font=normal_font)
-        bullet.pack(side="left", padx=(0,5))
-        lbl = tk.Label(f_frame, text=feature, fg="#495057", bg="white", font=normal_font)
-        lbl.pack(side="left")
-    btn_datesheet = tk.Button(
-        dt_card,
-        text="Generate DateSheet",
-        font=button_font,
-        bg="#0d6efd",
-        fg="white",
-        command=open_datesheet,
-        padx=15,
-        pady=8,
-        borderwidth=0
-    )
-    btn_datesheet.pack(pady=15)
-
-    # Footer
-    footer_frame = tk.Frame(main_frame, bg="#343a40", height=30)
-    footer_frame.pack(side="bottom", fill="x")
-    footer_frame.pack_propagate(False)
-    footer_text = tk.Label(
-        footer_frame,
-        text="© 2025 GIGCCL Scheduling System",
-        font=normal_font,
-        bg="#343a40",
-        fg="white"
-    )
-    footer_text.pack(side="left", padx=20)
-    version_text = tk.Label(
-        footer_frame,
-        text="v1.0",
-        font=normal_font,
-        bg="#343a40",
-        fg="#adb5bd"
-    )
-    version_text.pack(side="right", padx=20)
-
-    root.mainloop()
-
+    def open_datesheet(self):
+        self.stacked.setCurrentIndex(2)
 
 if __name__ == "__main__":
-    main()
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.showMaximized()  # Only call this here
+    sys.exit(app.exec())
