@@ -284,7 +284,7 @@ class TimetableWindow(QWidget):
     def show_generate_timetable_dialog(self):
         from PyQt6.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QSpinBox, QTimeEdit, QCheckBox,
-            QPushButton, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QWidget, QDateEdit
+            QPushButton, QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QWidget, QDateEdit, QScrollArea
         )
         from PyQt6.QtCore import QTime, QDate
         import os
@@ -295,7 +295,12 @@ class TimetableWindow(QWidget):
         dialog = QDialog(self)
         dialog.setWindowTitle("Configure Timetable Generation")
         dialog.resize(700, 800)
-        layout = QVBoxLayout(dialog)
+
+        # --- Add scroll area ---
+        scroll_area = QScrollArea(dialog)
+        scroll_area.setWidgetResizable(True)
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
 
         # --- Timetable Metadata ---
         layout.addWidget(QLabel("<b>Timetable Metadata</b>"))
@@ -509,6 +514,13 @@ class TimetableWindow(QWidget):
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
+
+        # Set scroll area widget
+        scroll_area.setWidget(scroll_content)
+
+        # Main dialog layout
+        main_layout = QVBoxLayout(dialog)
+        main_layout.addWidget(scroll_area)
 
         def on_generate():
             # Collect all values
